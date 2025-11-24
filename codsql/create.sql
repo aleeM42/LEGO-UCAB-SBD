@@ -14,7 +14,7 @@ constraint pk_estado primary key (ep_id, e_id),
 constraint fk_estados foreign key (ep_id) references paises(p_id)
 );
 
-create table ciuds (
+create table ciudades (
 cp_id number(4) not null, 
 ce_id number(4) not null,
 ciu_id number(4) not null, 
@@ -24,9 +24,10 @@ constraint fk_ciudades foreign key (cp_id, ce_id) references estados(ep_id, e_id
 );
 
 create table tours (
-tof_ini date primary key,
+to_fini date primary key,
 to_cupos number(3) not null,
 to_costo number(5) not null
+//fk inscripiciones
 );
 
 create table temas (
@@ -47,7 +48,7 @@ pro_raned number(2) not null,
 pro_ranpr number(4) not null,
 pro_set boolean not null,
 pro_instr varchar2(15),
-pro_piecs number(5),
+pro_piecs number(5), 
 constraint pk_productos primary key(pro_idtem, pro_cod),
 constraint fk_temaprod foreign key (pro_idtem) references temas(te_id),
 constraint f_set foreign key (id_set, set_idtem) references productos (pro_idtem, pro_cod)
@@ -102,4 +103,65 @@ h_cier date not null,
 constraint pk_horarios primary key (h_dia, h_tid),
 constraint fk_tienda foreign key (h_tid) references tiendas(ti_id) 
 //hacer conversion de date a hora
+);
+
+//revisar porque creo que esta mal
+create table prod_rela (
+rela_prodcod number(4) not null,
+rela_setcod number(4) not null,
+
+constraint pk_prodrela primary key (rela_prodcod, rela_setcod),
+constraint fk_prodrela foreign key (rela_prodcod, rela_setcod) references productos (pro_cod, pro_temid )
+);
+
+create table catalogos (
+cat_prod number(4) not null,
+cat_pais number(4) not null,
+cat_limcom number(3) not null,
+
+constraint pk_catalogo primary key (cat_prod, cat_pais),
+constraint fk_catprod foreign key (cat_prod) references productos (pro_cod, pro_idtem),
+constraint fk_catpais foreign key (cat_pais) references paises (p_id)
+);
+ 
+ //entidades entrada salida
+ 
+create table hist_precios (
+hp_prod number(4) not null,
+hp_fini date not null,
+hp_precio number(4) not null,
+hp_ffin date,
+constraint pk_histprecio primary key (hp_prod, hp_ini),
+constraint fk_prodhistpre foreign key (hp_prod) references productos (pro_cod, pro_idtem)
+);
+
+create table lotes (
+lot_prod number(4) not null,
+lot_tienda number(4) not null,
+lot_id number(4) not null,
+lot_stock number(4) not null, 
+
+constraint pk_lote primary key (lot_prod, lot_tienda, lot_id),
+constraint fk_loteprod foreign key (lot_prod) references productos (pro_cod, pro_idtem),
+constraint fk_lotetienda foreign key (lot_tienda) references tiendas (ti_id)
+);
+
+create table descuentos (
+d_lote number(4) not null,
+d_id number(4) not null,
+d_fecha date not null,
+d_cantidad number(10) not null,
+
+constraint pk_descuento primary key (d_lote, d_id),
+constraint fk_lotedesc foreign key (d_lote) references lotes (lot_prod, lot_tienda, lot_id)
+);
+
+create table inscripciones ( 
+ins_num number(4) primary key,
+ins_femision date not null,
+ins_total number(5) not null,
+ins_estado varchar2(15) not null,
+ins_tour number(4) not null,
+constraint check_estado check(ins_estado in ('PENDIENTE', 'PAGO')),
+constraint fk_inscriptour foreign key (ins_tour) references tours (to_fini)
 );
