@@ -27,7 +27,6 @@ create table tours (
 to_fini date primary key,
 to_cupos number(3) not null,
 to_costo number(5) not null
-//fk inscripiciones
 );
 
 create table temas (
@@ -67,6 +66,7 @@ cli_fvenpas date,
 cli_snombre number(4),
 constraint fk_pais foreign key (cli_nac) references paises(p_id)
 //si la nac pertenece a la eu no necesita pasaporte
+//constraint de check con la funcion edad
 );
 
 create table f_lego (
@@ -84,6 +84,7 @@ fl_repre number(4),
 constraint f_repre foreign key (fl_repre) references clientes(cli_id),
 constraint f_nac foreign key(fl_nac) references paises(p_id)
 //si no pertenece a la eu deben estar los datos del pasaporte 
+//constraint de check con la funcion edad
 );
 
 create table tiendas (
@@ -164,4 +165,75 @@ ins_estado varchar2(15) not null,
 ins_tour number(4) not null,
 constraint check_estado check(ins_estado in ('PENDIENTE', 'PAGO')),
 constraint fk_inscriptour foreign key (ins_tour) references tours (to_fini)
+);
+
+create table entradas_tour (
+ent_insc number(4) not null,
+ent_id number(4) not null,
+ent_tipo_asistente varchar2(10) not null,
+
+constraint fk_entradainscripcion foreign key (ent_insc) references inscripciones (ins_num),
+constraint pk_entradas primary key (ent_insc, ent_id),
+constraint chk_tipoasistenteent check (ent_tipo_asistente in('ADULTO', 'MENOR')) 
+);
+
+create table det_inscrip (
+det_insc_id number(4) primary key,
+det_insc_ins number(4) not null,
+det_insc_tipo char(2) not null,
+det_insc_fan number(4), 
+det_insc_cli number(4),
+
+constraint fk_detins_fanlego foreign key (det_insc_fan) references f_lego (fl_id),
+constraint fk_detins_cliente foreign key (det_insc_cli) references clientes (cli_id),
+constraint chek_arcoexc check(
+(det_insc_fan is not null and det_ins_cli is null)
+or (det_insc_fan is null and det_ins_cli is not null)) 
+//constraint ck_arcoex check ( nvl2(det_insc_fan, 1,0) + nvl2(det_insc_cli, 1,0))
+);
+
+create table factura_tf(
+fact_tf_num number(4) primary key,
+fact_tf_femision date not null,
+fact_tf_total number(5) not null,
+fact_tf_cli number(4) not null,
+fact_tf_tie number(4) not null,
+
+constraint fk_tienda_fact foreign key (fact_tf_tie) references tiendas (ti_id),
+constraint fk_cliente_fact_tf foreign key (fact_tf_cli) references clientes (cli_id)
+//posible trigger para el calculo total
+);
+
+create table factura_o (
+fact_o_num number(4) primary key,
+fact_o_femision date not null, 
+fact_o_total number(5) not null,
+fact_o_puntosgen number(3) not null,
+fact_o_cli number(4) not null,
+venta_gratis boolean, 
+
+constraint fk_cliente_facto foreign key (fact_o_cli) references clientes (cli_id)
+);
+
+create table det_fact_t (
+det_ft_fact number(4) not null,
+det_ft_id number(4) not null,
+det_ft_cantidad number(4) not null,
+det_ft_lote number(4) not null,
+
+constraint pk_det_facturatf primary key (det_ft_fact, det_ft_id),
+constraint fk_fact_det_fact_tf foreign key (det_ft_fact) references factura_tf(fact_tf_num),
+constraint fk_factdet_lote foreign key (det_ft_lote) references lotes (lot_prod, lot_tienda, lot_id)
+);
+
+create table det_fact_o (
+det_fo_fact number(4) not null,
+det_fo_cat number(4) not null,
+det_fo_id number(4) not null,
+det_fo_cantidad number(4) not null,
+det_fo_tipo_cli varchar2(10) not null,
+
+constraint pk_det_facturaO primary key (de_fo_fact, det_fo_cat, det_fo_id),
+constraint fk_fact_det_fact_o foreign key (det_fo_fact) references factura_o(fact_o_num),
+constraint fk_factdet_cat foreign key (det_ft_lote) references catalogos (cat_prod, cat_pais)
 );
