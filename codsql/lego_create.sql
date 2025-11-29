@@ -1,9 +1,11 @@
 create table paises (
-p_id number(4) primary key,
-p_nom varchar2(30) not null,
-p_con varchar2(30) not null, 
-p_ue boolean not null, 
-p_nac varchar2(30) not null
+    p_id number(4) primary key,
+    p_nom varchar2(30) not null,
+    p_con varchar2(30) not null, 
+    p_ue varchar2(2) not null, 
+    p_nac varchar2(30) not null, 
+
+    constraint ck_peu check (p_ue in('SI','NO'))
 ); 
 
 create table estados (
@@ -34,23 +36,28 @@ te_id number(4) primary key,
 te_nom varchar2(30) not null unique,
 te_tipo varchar2(10) not null,
 te_desc varchar2(100) not null,
-constraint fk_temasre foreign key (parent_id) references temas(te_id),
+te_padre number(4),
+constraint fk_temasre foreign key (te_padre) references temas(te_id),
 constraint check_tipot check (te_tipo in('SERIE','TEMA'))
 );
 
 create table productos (
-pro_idtem number(4) not null,
 pro_cod number(4) not null unique,
+pro_idtem number(4) not null,
 pro_nom varchar2(15) not null,
 pro_desc varchar2(100) not null,
 pro_raned number(2) not null,
 pro_ranpr number(4) not null,
-pro_set boolean not null,
+pro_set varchar2(2) not null,
 pro_instr varchar2(15),
 pro_piecs number(5), 
-constraint pk_productos primary key(pro_idtem, pro_cod),
+set_id number(4),
+set_idtem number(4),
+constraint pk_productos primary key(pro_cod, pro_idtem),
 constraint fk_temaprod foreign key (pro_idtem) references temas(te_id),
-constraint f_set foreign key (id_set, set_idtem) references productos (pro_idtem, pro_cod)
+constraint f_set foreign key (set_id, set_idtem) references productos (pro_cod, pro_idtem),
+constraint ck_setprod check (pro_set in( 'SI','NO'))
+--set pertenece a un tema?
 );            
  
 create table clientes (
@@ -60,13 +67,16 @@ cli_papellido varchar2(30) not null,
 cli_sapellido varchar2(30) not null,
 cli_dni number(12) not null,
 cli_fnacimiento date not null,
-cli_nac varchar  not null,
+cli_nac number(4)  not null,
+cli_reside number(4) not null,
 cli_numpas NUMBER(10),
 cli_fvenpas date,
 cli_snombre number(4),
+
+constraint fk_residecliente foreign key (cli_reside) references paises(p_id),
 constraint fk_pais foreign key (cli_nac) references paises(p_id)
-//si la nac pertenece a la eu no necesita pasaporte
-//constraint de check con la funcion edad
+--si la nac pertenece a la eu no necesita pasaporte
+--constraint de check con la funcion edad
 );
 
 create table f_lego (
@@ -83,8 +93,8 @@ fl_snombre varchar2(30),
 fl_repre number(4), 
 constraint f_repre foreign key (fl_repre) references clientes(cli_id),
 constraint f_nac foreign key(fl_nac) references paises(p_id)
-//si no pertenece a la eu deben estar los datos del pasaporte 
-//constraint de check con la funcion edad
+--si no pertenece a la eu deben estar los datos del pasaporte 
+--constraint de check con la funcion edad
 );
 
 create table tiendas (
@@ -93,7 +103,12 @@ ti_nom varchar2(30) not null,
 ti_dic varchar2(30) not null,
 ti_tel number(12) not null,
 ti_ciu number(4) not null,
-constraint f_ciudad foreign key(ti_ciu) references ciuds (ciu_id)
+ti_pais number(4) not null,
+ti_estado number(4) not null,
+
+constraint fk_pais_tienda foreign key (ti_pais) references paises (p_id),
+constraint fk_estado_tienda foreign key (ti_pais, ti_estado) references estados (ep_id, e_id),
+constraint f_ciudad foreign key(ti_pais, ti_estado, ti_ciu) references ciudades (cp_id, ce_id, ciu_id)
 );
 
 create table horarios (
@@ -103,58 +118,68 @@ h_aper date not null,
 h_cier date not null, 
 constraint pk_horarios primary key (h_dia, h_tid),
 constraint fk_tienda foreign key (h_tid) references tiendas(ti_id) 
-//hacer conversion de date a hora
+--hacer conversion de date a hora
 );
 
-//revisar porque creo que esta mal
+
 create table prod_rela (
 rela_prodcod number(4) not null,
+rela_prod_idtem number(4) not null,
+rela_set_idtem number(4) not null,
 rela_setcod number(4) not null,
 
-constraint pk_prodrela primary key (rela_prodcod, rela_setcod),
-constraint fk_prodrela foreign key (rela_prodcod, rela_setcod) references productos (pro_cod, pro_temid )
+constraint pk_prodrela primary key (rela_prodcod, rela_prod_idtem, rela_setcod, rela_set_idtem),
+constraint fk_prodrela foreign key (rela_prodcod, rela_prod_idtem) references productos (pro_cod, pro_idtem),
+constraint fk_setrela foreign key (rela_setcod, rela_set_idtem) references productos (set_id, set_idtem)
 );
 
 create table catalogos (
+cat_prod_idtem number(4) not null,    
 cat_prod number(4) not null,
 cat_pais number(4) not null,
 cat_limcom number(3) not null,
 
-constraint pk_catalogo primary key (cat_prod, cat_pais),
-constraint fk_catprod foreign key (cat_prod) references productos (pro_cod, pro_idtem),
+constraint pk_catalogo primary key (cat_prod, cat_prod_idtem, cat_pais),
+constraint fk_catprod foreign key (cat_prod, cat_prod_idtem) references productos (pro_cod, pro_idtem),
 constraint fk_catpais foreign key (cat_pais) references paises (p_id)
+
 );
  
- //entidades entrada salida
+--entidades entrada salida
  
 create table hist_precios (
 hp_prod number(4) not null,
+hp_idtem number(4) not null,
 hp_fini date not null,
 hp_precio number(4) not null,
 hp_ffin date,
-constraint pk_histprecio primary key (hp_prod, hp_ini),
-constraint fk_prodhistpre foreign key (hp_prod) references productos (pro_cod, pro_idtem)
+constraint pk_histprecio primary key (hp_prod, hp_idtem, hp_fini),
+constraint fk_prodhistpre foreign key (hp_prod, hp_idtem) references productos (pro_cod, pro_idtem)
 );
 
 create table lotes (
 lot_prod number(4) not null,
+lot_idtem number(4) not null,
 lot_tienda number(4) not null,
 lot_id number(4) not null,
 lot_stock number(4) not null, 
 
-constraint pk_lote primary key (lot_prod, lot_tienda, lot_id),
-constraint fk_loteprod foreign key (lot_prod) references productos (pro_cod, pro_idtem),
+constraint pk_lote primary key (lot_prod, lot_idtem, lot_tienda, lot_id),
+constraint fk_loteprod foreign key (lot_prod, lot_idtem) references productos (pro_cod, pro_idtem),
 constraint fk_lotetienda foreign key (lot_tienda) references tiendas (ti_id)
 );
 
 create table descuentos (
 d_lote number(4) not null,
+d_prod number(4) not null,
+d_idtem number(4) not null,
+d_tienda number(4) not null,
 d_id number(4) not null,
 d_fecha date not null,
 d_cantidad number(10) not null,
 
-constraint pk_descuento primary key (d_lote, d_id),
-constraint fk_lotedesc foreign key (d_lote) references lotes (lot_prod, lot_tienda, lot_id)
+constraint pk_descuento primary key (d_lote, d_tienda, d_prod, d_idtem, d_id),
+constraint fk_lotedesc foreign key (d_prod, d_idtem, d_tienda, d_lote) references lotes (lot_prod, lot_idtem, lot_tienda, lot_id)
 );
 
 create table inscripciones ( 
@@ -162,7 +187,8 @@ ins_num number(4) primary key,
 ins_femision date not null,
 ins_total number(5) not null,
 ins_estado varchar2(15) not null,
-ins_tour number(4) not null,
+ins_tour date not null,
+
 constraint check_estado check(ins_estado in ('PENDIENTE', 'PAGO')),
 constraint fk_inscriptour foreign key (ins_tour) references tours (to_fini)
 );
@@ -178,18 +204,19 @@ constraint chk_tipoasistenteent check (ent_tipo_asistente in('ADULTO', 'MENOR'))
 );
 
 create table det_inscrip (
-det_insc_id number(4) primary key,
-det_insc_ins number(4) not null,
-det_insc_tipo char(2) not null,
-det_insc_fan number(4), 
-det_insc_cli number(4),
+det_ins_id number(4) primary key,
+det_ins_ins number(4) not null,
+det_ins_tipo char(2) not null,
+det_ins_fan number(4), 
+det_ins_cli number(4),
 
-constraint fk_detins_fanlego foreign key (det_insc_fan) references f_lego (fl_id),
-constraint fk_detins_cliente foreign key (det_insc_cli) references clientes (cli_id),
+constraint fk_detins_fanlego foreign key (det_ins_fan) references f_lego (fl_id),
+constraint fk_detins_cliente foreign key (det_ins_cli) references clientes (cli_id),
+constraint fk_inscripciondet foreign key (det_ins_ins) references inscripciones (ins_num),
 constraint chek_arcoexc check(
-(det_insc_fan is not null and det_ins_cli is null)
-or (det_insc_fan is null and det_ins_cli is not null)) 
-//constraint ck_arcoex check ( nvl2(det_insc_fan, 1,0) + nvl2(det_insc_cli, 1,0))
+(det_ins_fan is not null and det_ins_cli is null)
+or (det_ins_fan is null and det_ins_cli is not null)) 
+--constraint ck_arcoex check ( nvl2(det_insc_fan, 1,0) + nvl2(det_insc_cli, 1,0))
 );
 
 create table factura_tf(
@@ -201,7 +228,7 @@ fact_tf_tie number(4) not null,
 
 constraint fk_tienda_fact foreign key (fact_tf_tie) references tiendas (ti_id),
 constraint fk_cliente_fact_tf foreign key (fact_tf_cli) references clientes (cli_id)
-//posible trigger para el calculo total
+--posible trigger para el calculo total
 );
 
 create table factura_o (
@@ -210,8 +237,9 @@ fact_o_femision date not null,
 fact_o_total number(5) not null,
 fact_o_puntosgen number(3) not null,
 fact_o_cli number(4) not null,
-venta_gratis boolean, 
+venta_gratis varchar(2), 
 
+constraint ck_ventagrat check (venta_gratis in ('SI','NO')),
 constraint fk_cliente_facto foreign key (fact_o_cli) references clientes (cli_id)
 );
 
@@ -220,20 +248,25 @@ det_ft_fact number(4) not null,
 det_ft_id number(4) not null,
 det_ft_cantidad number(4) not null,
 det_ft_lote number(4) not null,
+det_ft_tienda number(4) not null,
+det_ft_prod number(4) not null,
+det_ft_idtem number(4) not null,
 
 constraint pk_det_facturatf primary key (det_ft_fact, det_ft_id),
 constraint fk_fact_det_fact_tf foreign key (det_ft_fact) references factura_tf(fact_tf_num),
-constraint fk_factdet_lote foreign key (det_ft_lote) references lotes (lot_prod, lot_tienda, lot_id)
+constraint fk_factdet_lote foreign key (det_ft_prod, det_ft_idtem, det_ft_tienda, det_ft_lote) references lotes (lot_prod, lot_idtem, lot_tienda, lot_id)
 );
 
 create table det_fact_o (
 det_fo_fact number(4) not null,
-det_fo_cat number(4) not null,
+det_fo_idtem number(4) not null,
+det_fo_pais number(4) not null,
+det_fo_prod number(4) not null,
 det_fo_id number(4) not null,
 det_fo_cantidad number(4) not null,
 det_fo_tipo_cli varchar2(10) not null,
 
-constraint pk_det_facturaO primary key (de_fo_fact, det_fo_cat, det_fo_id),
+constraint pk_det_facturaO primary key (det_fo_fact, det_fo_prod, det_fo_idtem, det_fo_pais, det_fo_id),
 constraint fk_fact_det_fact_o foreign key (det_fo_fact) references factura_o(fact_o_num),
-constraint fk_factdet_cat foreign key (det_ft_lote) references catalogos (cat_prod, cat_pais)
+constraint fk_factdet_cat foreign key (det_fo_prod, det_fo_idtem, det_fo_pais) references catalogos (cat_prod, cat_prod_idtem, cat_pais)
 );
