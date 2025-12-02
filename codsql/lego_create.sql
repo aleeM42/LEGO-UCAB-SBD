@@ -320,6 +320,6 @@ create table det_fact_o (
     constraint fk_factdet_cat foreign key (det_fo_prod, det_fo_idtem, det_fo_pais) references catalogos (cat_prod, cat_prod_idtem, cat_pais)
 );
 
-alter table clientes add constraint ck_edad_cliente check (edad(cli_fnacimiento) >= 18)
+alter table clientes add constraint ck_edad_cliente check (edad(cli_fnacimiento) > 21)
 
-alter table f_lego add constraint ck_edad_f_lego check (edad(fl_fnacimiento) between 12 and 17) 
+alter table f_lego add constraint ck_edad_f_lego check (edad(fl_fnacimiento) between 12 and 20) 

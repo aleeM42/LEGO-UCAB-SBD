@@ -46,11 +46,185 @@ begin
     RETURN v_total;
 end;    
 
+-- funcion para verificar cupos del tour
+
+create or replace function verificar_cupos (p_fecha_tour date)
+return number is 
+    v_cupos_totales tours.to_cupos%type;
+    v_cupos_ocupados number := 0;
+    v_cupos_disponibles number;
+
+begin
+    select to_cupos into v_cupos_totales from tours 
+    where to_fini = p_fecha_tour;
+
+    if v_cupos_totales <= 0 then
+        raise_application_error(-20009, 'El tour no tiene cupos disponibles');
+    end if;
+
+    select count(*) into v_cupos_ocupados from inscripciones 
+    where ins_tour = p_fecha_tour and ins_estado = 'PAGO';
+
+    v_cupos_disponibles := v_cupos_totales - v_cupos_ocupados;
+    return v_cupos_disponibles;
+
+end;
+
+--funcion para validar la fecha del tour y es vigente 
+create or replace function validar_fecha_tour (p_fecha_tour date)
+return boolean is
+    v_tour_existe number;
+    v_fecha_actual date := sysdate; 
+    v_ano_actual number := extract(year from v_fecha_actual);
+begin
+
+    select count(*) into v_tour_existe from tours 
+    where to_fini = p_fecha_tour;
+
+    if v_tour_existe = 0 then
+        raise_application_error(-20010, 'La fecha seleccionada para le tour no esta disponible');
+    end if;
+-- validar que la fecha no es del pasado
+    if p_fecha_tour < trunc(v_ano_actual) THEN
+        raise_application_error(-20010, 'No se puede inscribir el tour en una fecha pasada');
+    end if;   
+
+-- validar que la fecha esta dentro del rango de anos del proyecto 
+    if extract(year from p_fecha_tour) < 2024 then
+        raise_application_error(-20010, 'EL tour seleccionado esta fuera del rango de anos permitidos');
+    end if;
+    return true;
+
+    exception 
+        when others THEN
+        if sqlcode in (-20010) then
+            raise;
+        else 
+            raise_application_error(-20010, 'Error al validar la fecha del tour');
+        end if;    
+
+end;
+-----------------------------------------------------------
+-- Validaciones de clientes 
+-----------------------------------------------------------
+
+-- funcion para obtener datos completos de un cliente 
+
+ create or replace function obtner_cliente_info (p_cli_id number) 
+ return sys_refcursor is
+    v_cursor sys_refcursor;
+    v_cliente_existe number; 
+
+begin 
+    select count (*) into v_cliente_existe 
+    from clientes where cli_id = p_cli_id;
+    
+    if v_cliente_existe = 0 THEN
+        raise_application_error(-20012, 'El cliente con id' || p_cli_id || 'no existe en la base de datos');
+    end if;
+
+    --abrir cursor con datos del cliente 
+
+    open v_cursor for 
+        select
+            cli_id,
+            cli_pnombre,
+            cli_papellido, 
+            cli_sapellido,
+            cli_snombre,
+            cli_dni,
+            cli_fnacimiento,
+            cli_nac,
+            cli_reside,
+            cli_numpas,
+            cli_fvenpas,
+            edad(cli_fnacimiento) AS edad_calculada,
+            p_id AS pais_id,
+            p_nom AS pais_nombre,
+            p_ue AS pais_pertenece_ue
+        from clientes c
+        left join paises p on c.cli_nac = p.p_id
+        where c_cli_id = p_cli_id;
+    return v_cursor;
+end;
+
+-- funcion para validar edad del cliente 
+
+create or replace function validar_edad_cliente (p_cli_id number)
+return boolean is
+    v_cli_fnacimiento clientes.cli_fnacimiento%type;
+    v_edad number;
+begin
+    select cli_fnacimiento into v_cli_fnacimiento 
+    from clientes where cli_id = p_cli_id;
+
+    v_edad:=  edad(v_cli_fnacimiento);
+    if v_edad < 21 then 
+        raise_application_error (-20013, 'La edad minima permitida, para realizar una compra, es 21 anos');
+    end if;
+    return true;
+end;
+
+-- validar documentacion del cliente 
+
+create or replace function fn_validar_documentacion_cliente (p_cli_id number)
+return boolean is
+    v_pais_id paises.p_id%type;
+    v_pertenece_ue paises.p_ue%type;
+    v_numpas clientes.cli_numpas%type;
+    v_fvenpas clientes.cli_fvenpas%type;
+BEGIN
+    select cli_nac, cli_numpas, cli_fvenpas 
+    into v_pais_id, v_numpas, v_fvenpas from clientes
+    where cli_id = p_cli_id; 
+
+    v_pertenece_ue := es_ue(v_pais_id);
+    if v_pertenece_ue = 'NO' then 
+        if v_numpas is null then 
+            raise_application_error(-20014, 'El cliente debe indicar numero de pasaporte');
+        end if;
+
+        if v_fvenpas is null then 
+            raise_application_error(-20014, 'El cliente debe indicar la fecha de vencimiento de su pasaporte');
+        end if;
+
+        if v_fvenpas < trunc (sysdate) then
+            raise_application_error(-20014, 'Debe ingresar un pasaporte vigente');
+        end if;
+    end if;
+END;
+
+
+-----------------------------------------------------------
+-- Validaciones de fan lego
+-----------------------------------------------------------
+
+create or replace function validar_edad_fan_lego (p_fl_id number)
+return boolean is
+    v_fl_fnac f_lego.fl_fnacimiento%type;
+    v_edad number; 
+BEGIN
+
+    select fl_fnacimiento into v_fl_fanc 
+    from f_lego where fl_id = p_fl_id;
+
+    v_edad := edad(v_fl_fnac);
+    if v_edad < 12 or v_edad > 20 then
+        raise_application_error(-20015, 'La edad del fan lego debe estar entre 12 y 20 anos');
+    end if;
+    return true;
+end;
+
+
+
+
+
+
+
+
 
 
 ------------------------------------- TRIGGERS -------------------------------------------
-
-
 
 --trigger para mantener precios actualizados 
 
@@ -193,7 +367,7 @@ begin
     end if;
 end;
 
---trigger para pais de residencia de los clientes 
+--trigger para recargo de envio por pais de residencia de los clientes 
 
 create or replace trigger residencia_clientes
 before insert on factura_o
@@ -280,7 +454,6 @@ before delete on factura_tf
 begin  
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
-
 
 
 
