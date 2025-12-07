@@ -8,11 +8,9 @@ RETURN number is
 BEGIN
     return trunc((months_between(sysdate, fecha_nacimiento) /12));
 end;
-
 /
 
 -- funcion para verificar si pertenece a la UE
-
 create or replace function es_ue(p_pais_id number) 
 return varchar2 is
     v_ue paises.p_ue%TYPE;
@@ -25,7 +23,6 @@ end;
 /
 
 --funcion para calcular el total
-
 create or replace function calcular_total (p_fact_num number)
 return number is 
     v_total number := 0;
@@ -46,12 +43,16 @@ begin
     RETURN v_total;
 end;    
 /
+
 -----------------------------------------------------------
 ------------------------- TOUR ----------------------------
 -----------------------------------------------------------
 
--- funcion para verificar cupos del tour
 
+
+
+
+-- funcion para verificar cupos del tour
 create or replace function verificar_cupos (p_fecha_tour date)
 return number is 
     v_cupos_totales tours.to_cupos%type;
@@ -110,13 +111,12 @@ begin
 
 end;
 /
+
 -----------------------------------------------------------
 -- Validaciones de clientes 
 -----------------------------------------------------------
-
 -- funcion para obtener datos completos de un cliente 
-
- create or replace function obtner_cliente_info (p_cli_id number) 
+ create or replace function obtener_cliente_info (p_cli_id number) 
  return sys_refcursor is
     v_cursor sys_refcursor;
     v_cliente_existe number; 
@@ -173,9 +173,23 @@ begin
 end;
 /
 
+--funcion para validar si existe el cliente
+create or replace function cliente_existe(p_cli_id number)
+return boolean is 
+    v_cont number;
+begin
+    select count(*) into v_cont
+    from clientes where cli_id = p_cli_id;
+
+    return (v_cont > 0);
+
+end;
+/
+
+
 -- validar documentacion del cliente 
 
-create or replace function fn_validar_documentacion_cliente (p_cli_id number)
+create or replace function validar_documentacion_cliente (p_cli_id number)
 return boolean is
     v_pais_id paises.p_id%type;
     v_pertenece_ue paises.p_ue%type;
@@ -207,9 +221,7 @@ END;
 -- Validaciones de fan lego
 -----------------------------------------------------------
 
-CREATE OR REPLACE FUNCTION fn_validar_edad_fan_lego (
-    p_fl_id NUMBER
-)
+CREATE OR REPLACE FUNCTION validar_edad_fan_lego (p_fl_id NUMBER)
 RETURN BOOLEAN IS
     v_fecha_nac f_lego.fl_fnacimiento%TYPE;
     v_edad_actual NUMBER;
@@ -222,21 +234,35 @@ BEGIN
     
     v_edad_actual := edad(v_fecha_nac);
     
-    IF v_edad_actual < 12 OR v_edad_actual > 17 THEN
+    IF v_edad_actual < 12 OR v_edad_actual > 20 THEN
         RAISE_APPLICATION_ERROR(
             -20015,
-            'Los Fans LEGO deben tener entre 12 y 17 años. ' ||
+            'Los Fans LEGO deben tener entre 12 y 20 años. ' ||
             'Edad actual del fan: ' || v_edad_actual || ' años.'
         );
     END IF;
     
     RETURN TRUE;
-END fn_validar_edad_fan_lego;
+END validar_edad_fan_lego;
 /
+
+---validar si fan lego existe 
+create or replace function fan_lego_existe (p_fl_id number)
+return boolean is 
+    v_cont number;
+begin
+    select count(*) into v_cont
+    from f_lego where fl_id = p_fl_id;
+
+    return (v_cont > 0);
+
+end;
+/
+
 
 --- funcion para validar que tiene un representante asignado 
 
-create or replace function validar_representante_fl (p_fl_id number) 
+create or replace function validar_representante_asignado (p_fl_id number) 
 return boolean is
     v_fl_representante f_lego.fl_repre%type;
     v_fl_fnac f_lego.FL_FNACIMIENTO%TYPE;
@@ -353,11 +379,112 @@ begin
 end;
 /
 
+--- validacion para el representante (que sea mayor de edad)
 
+create or replace function validar_representante (p_cli_id number)
+return boolean is
+    v_fnacimiento clientes.cli_fnacimiento%type;
+    v_edad number;
+begin
 
+    if not cliente_existe(p_cli_id) then 
+        raise_application_error(-20019, 'El cliente representante no existe');
+    end if;
+
+    select cli_fnacimiento into v_fnacimiento 
+    from clientes where cli_id = p_cli_id;
+
+    v_edad := edad(v_fnacimiento);
+
+    if v_edad < 21 then 
+        raise_application_error(-20019, 'El cliente no puede ser un representante porque no tiene la edad para serlo');
+    end if; 
+
+    if not validar_documentacion_cliente(p_cli_id) then 
+        raise_application_error(-20019,'El representante no tiene la documentacion para viajar');
+    end if;
+return true;
+end;
+/
+
+------------------------------------------------------------------------------------------
 ------------------------------------- TRIGGERS -------------------------------------------
+------------------------------------------------------------------------------------------
 
---trigger para mantener precios actualizados 
+--trigger para validar la edad del fan de legp y clientes en el detalle de la inscripcion
+CREATE OR REPLACE TRIGGER trg_validar_edad_inscripcion_tour
+BEFORE INSERT ON det_inscrip
+FOR EACH ROW
+DECLARE
+    v_fecha_nac DATE;
+    v_edad NUMBER;
+BEGIN
+    
+    -- Si es cliente
+    IF :new.det_ins_cli IS NOT NULL THEN
+        SELECT cli_fnacimiento
+        INTO v_fecha_nac
+        FROM clientes
+        WHERE cli_id = :new.det_ins_cli;
+        
+        v_edad := edad(v_fecha_nac);
+        
+        IF v_edad < 12 THEN
+            RAISE_APPLICATION_ERROR(
+                -20020,
+                'Cliente ID ' || :new.det_ins_cli || 
+                ' no cumple edad mínima (12 años). Edad actual: ' || v_edad || '.'
+            );
+        END IF;
+    
+    -- Si es fan LEGO
+    ELSIF :new.det_ins_fan IS NOT NULL THEN
+        SELECT fl_fnacimiento
+        INTO v_fecha_nac
+        FROM f_lego
+        WHERE fl_id = :new.det_ins_fan;
+        
+        v_edad := edad(v_fecha_nac);
+        
+        IF v_edad < 12 OR v_edad > 17 THEN
+            RAISE_APPLICATION_ERROR(
+                -20020,
+                'Fan LEGO ID ' || :new.det_ins_fan || 
+                ' está fuera del rango permitido (12-17 años). Edad actual: ' || v_edad || '.'
+            );
+        END IF;
+    END IF;
+END trg_validar_edad_inscripcion_tour;
+/
+
+----triger para validar que fan tiene representante en la inscripcion 
+create or replace trigger trg_validar_representante_en_inscripcion
+before insert or update on det_inscrip 
+for each row 
+declare
+    v_repre_id number;
+    v_repre_ins number; 
+begin
+    if :new.det_ins_fan is not null then 
+        select fl_repre into v_repre_id 
+        from f_lego where fl_id = :new.det_ins_fan;
+
+        if v_repre_id is null then 
+            raise_application_error(-20021, 'Fan lego sin representante asignado, no puede ser inscrito');
+        end if;
+
+        --- esto solo verifica si el representante ya esta, (si no esta lo valida el procedimiento pprincipal)
+        --- este trigger solo adiverte si no esta 
+        select count (*) into v_repre_ins    
+        from det_inscrip where det_ins_ins = :new.det_ins_ins 
+        and det_ins_cli = v_repre_id;
+
+        --- no es error si no esta, se registra para la auditoria 
+    end if;
+end;
+/
+
+
 
 
 --trigger para la edad de los clientes 
@@ -631,4 +758,158 @@ begin
 end;
 /
 
+-------------------------------------------------------------------------------------------
+------------------------------------- PROCEDIMIENTOS --------------------------------------
+-------------------------------------------------------------------------------------------
+CREATE OR REPLACE PROCEDURE pr_validar_fase_1 (
+    p_fecha_tour DATE,
+    p_participante_id NUMBER,
+    p_tipo_participante CHAR,
+    p_validar_cupos BOOLEAN,
+    p_resultado OUT VARCHAR2
+) IS
+    v_cupos_disponibles NUMBER;
+    v_es_valido BOOLEAN := TRUE;
+    v_mensaje VARCHAR2(1000) := '';
+BEGIN
+    
+    -- ════════════════════════════════════════════════════════
+    -- VALIDACIÓN 1: Verificar que la fecha del tour es válida
+    -- ════════════════════════════════════════════════════════
+    BEGIN
+        v_es_valido := validar_fecha_tour(p_fecha_tour);
+        v_mensaje := v_mensaje || ' [✓] Fecha del tour válida.';
+    EXCEPTION
+        WHEN OTHERS THEN
+            v_es_valido := FALSE;
+            v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+            RAISE;
+    END;
+    
+    -- ════════════════════════════════════════════════════════
+    -- VALIDACIÓN 2: Verificar cupos disponibles (opcional)
+    -- ════════════════════════════════════════════════════════
+    IF p_validar_cupos THEN
+        BEGIN
+            v_cupos_disponibles := verificar_cupos(p_fecha_tour);
+            IF v_cupos_disponibles <= 0 THEN
+                RAISE_APPLICATION_ERROR(
+                    -20010,
+                    'No hay cupos disponibles para este tour.'
+                );
+            END IF;
+            v_mensaje := v_mensaje || ' [✓] Cupos disponibles: ' || v_cupos_disponibles || '.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+    END IF;
+    
+    -- ════════════════════════════════════════════════════════
+    -- VALIDACIÓN 3: Validar participante (Cliente o Fan)
+    -- ════════════════════════════════════════════════════════
+    IF p_tipo_participante = 'C' THEN
+        
+        -- Validar cliente
+        IF NOT cliente_existe(p_participante_id) THEN
+            RAISE_APPLICATION_ERROR(
+                -20012,
+                'Cliente ID ' || p_participante_id || ' no existe.'
+            );
+        END IF;
+        v_mensaje := v_mensaje || ' [✓] Cliente existe.';
+        
+        
+        -- Validar documentación
+        BEGIN
+            v_es_valido := validar_documentacion_cliente(p_participante_id);
+            v_mensaje := v_mensaje || ' [✓] Documentación válida.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+        
+    ELSIF p_tipo_participante = 'F' THEN
+        
+        -- Validar fan LEGO
+        IF NOT fan_lego_existe(p_participante_id) THEN
+            RAISE_APPLICATION_ERROR(
+                -20017,
+                'Fan LEGO ID ' || p_participante_id || ' no existe.'
+            );
+        END IF;
+        v_mensaje := v_mensaje || ' [✓] Fan LEGO existe.';
+        
+        -- Validar edad (12-20 años)
+        BEGIN
+            v_es_valido := validar_edad_fan_lego(p_participante_id);
+            v_mensaje := v_mensaje || ' [✓] Edad en rango 12-20 años.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+        
+        -- Validar representante
+        BEGIN
+            v_es_valido := validar_representante_asignado(p_participante_id);
+            v_mensaje := v_mensaje || ' [✓] Representante asignado.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+        
+        -- Validar representante es válido
+        DECLARE
+            v_repre_id NUMBER;
+        BEGIN
+            SELECT fl_repre INTO v_repre_id FROM f_lego WHERE fl_id = p_participante_id;
+            v_es_valido := validar_representante(v_repre_id);
+            v_mensaje := v_mensaje || ' [✓] Representante es cliente válido.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+        
+        -- Validar documentación del fan
+        BEGIN
+            v_es_valido := validar_documentacion_fl(p_participante_id);
+            v_mensaje := v_mensaje || ' [✓] Documentación del fan válida.';
+        EXCEPTION
+            WHEN OTHERS THEN
+                v_es_valido := FALSE;
+                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
+                RAISE;
+        END;
+        
+    ELSE
+        RAISE_APPLICATION_ERROR(
+            -20099,
+            'Tipo de participante inválido. Use "C" para cliente o "F" para fan.'
+        );
+    END IF;
+    
+    -- ════════════════════════════════════════════════════════
+    -- RESULTADO FINAL
+    -- ════════════════════════════════════════════════════════
+    IF v_es_valido THEN
+        p_resultado := 'VALIDACIÓN EXITOSA.' || v_mensaje;
+    ELSE
+        p_resultado := 'VALIDACIÓN FALLIDA.' || v_mensaje;
+    END IF;
 
+EXCEPTION
+    WHEN OTHERS THEN
+        p_resultado := 'ERROR EN VALIDACIONES: ' || SQLERRM;
+        RAISE;
+END pr_validar_fase_1;
+/
