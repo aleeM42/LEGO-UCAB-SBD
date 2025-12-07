@@ -46,6 +46,10 @@ begin
     RETURN v_total;
 end;    
 
+-----------------------------------------------------------
+------------------------- TOUR ----------------------------
+-----------------------------------------------------------
+
 -- funcion para verificar cupos del tour
 
 create or replace function verificar_cupos (p_fecha_tour date)
@@ -215,8 +219,121 @@ BEGIN
     return true;
 end;
 
+--- funcion para validar que tiene un representante asignado 
+
+create or replace function validar_representante_fl (p_fl_id number) 
+return boolean is
+    v_fl_representante f_lego.fl_repre%type;
+    v_fl_fnac f_lego.FL_FNACIMIENTO%TYPE;
+    v_edad number;
+begin
+    select fl_repre, fl_fnacimiento into v_fl_representante, v_fl_fnac 
+    from f_lego where fl_id = p_fl_id;
+
+    v_edad := edad(v_fl_fnac);
+
+    if v_edad BETWEEN 12 and 17 then
+        if v_fl_representante is null then
+            raise_application_error(-20016, 'El fan lego debe tener un representante adulto asignado');
+        end if;
+    end if;
+
+    return true;
+
+end;
 
 
+--funcion para obtener los datos del fan lego + representante 
+
+create or replace function obtener_datos_fl (p_fl_id number) 
+return sys_refcursor is
+    v_cursor sys_refcursor;
+    v_fan_existe number;
+begin
+    select count(*) into v_fan_existe 
+    from f_lego where fl_id = p_fl_id;
+
+    if v_fan_existe = 0 then 
+        raise_application_error(-20017, 'EL fan lego no se pudo encontrar');
+    end if;
+
+    OPEN v_cursor FOR
+        SELECT 
+            -- Datos del Fan
+            f.fl_id,
+            f.fl_pnombre,
+            f.fl_papellido,
+            f.fl_sapellido,
+            f.fl_snombre,
+            f.fl_dni,
+            f.fl_fnacimiento,
+            f.fl_nac,
+            f.fl_numpas,
+            f.fl_fvenpas,
+            edad(f.fl_fnacimiento) AS edad_fan,
+            pf.p_nom AS pais_fan_nombre,
+            pf.p_ue AS pais_fan_ue,
+            
+            -- Datos del Representante
+            c.cli_id,
+            c.cli_pnombre AS rep_pnombre,
+            c.cli_papellido AS rep_papellido,
+            c.cli_sapellido AS rep_sapellido,
+            c.cli_snombre AS rep_snombre,
+            c.cli_dni AS rep_dni,
+            c.cli_fnacimiento AS rep_fnacimiento,
+            edad(c.cli_fnacimiento) AS edad_representante,
+            c.cli_nac AS rep_pais_nac,
+            pc.p_nom AS rep_pais_nombre,
+            c.cli_numpas AS rep_numpas,
+            c.cli_fvenpas AS rep_fvenpas
+            
+        FROM f_lego f
+        LEFT JOIN paises pf ON f.fl_nac = pf.p_id
+        LEFT JOIN clientes c ON f.fl_repre = c.cli_id
+        LEFT JOIN paises pc ON c.cli_nac = pc.p_id
+        WHERE f.fl_id = p_fl_id;
+    
+    RETURN v_cursor;
+
+
+
+
+end;
+
+
+--- validar documentacion del fan lego
+create or replace function validar_documentacion_fl (p_fl_id number)
+return boolean is
+    v_pais_id paises.p_id%TYPE;
+    v_pertenece_ue paises.p_ue%TYPE;
+    v_numpas f_lego.fl_numpas%TYPE;
+    v_fvenpas f_lego.fl_fvenpas%TYPE;
+
+begin
+    select fl_nac, fl_numpas, fl_fvenpas into v_pais_id, v_numpas, v_fvenpas
+    from f_lego where fl_id = p_fl_id;
+
+    v_pertenece_ue := es_ue(v_pais_id);
+
+    if v_pertenece_ue = 'NO' then 
+        if v_numpas is null then
+            raise_application_error(-20018, 'El fan lego debe indicar el numero de pasaporte');
+        end if;    
+
+        if v_fvenpas is null then 
+            raise_application_error(-20018,'El fan lego debe indicar la fecha de vencimiento de su pasaporte');
+        end if;
+
+        if v_fvenpas < trunc(sysdate) then 
+            raise_application_error(-20018, 'Debe proporcionar un pasaporte vigente');
+        end if;
+
+    end if;
+
+    return true;
+
+end;
 
 
 
@@ -229,7 +346,32 @@ end;
 --trigger para mantener precios actualizados 
 
 
+--trigger para la edad de los clientes 
+create or replace trigger verificar_edad_Cliente 
+before insert or update on clientes 
+for each row 
+declare 
+    v_edad number;
+begin
+    v_edad := trunc(months_between(sysdate, :new.cli_fnacimiento)/12);
+    if v_edad < 21 then
+        raise_application_error(-20006, 'El cliente debe ser mayor a 21 anos');
+    end if;
+end;
 
+--trigger para la edad de los fans de lego
+create or replace trigger verificar_edad_fl
+before insert or update on f_lego 
+for each row 
+declare 
+    v_edad number;
+begin
+    v_edad := trunc(months_between(sysdate, :new.fl_fnacimiento)/12);
+
+    if v_edad < 12 or v_edad > 20 then 
+        raise_application_error(-20007, 'Fan lego debe tener entre 12 y 20 anos');
+    end if;
+end;
 
 
 --trigger para verificar que la cantidad del producto se puede vender 
