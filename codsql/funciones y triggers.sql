@@ -9,7 +9,7 @@ BEGIN
     return trunc((months_between(sysdate, fecha_nacimiento) /12));
 end;
 
-
+/
 
 -- funcion para verificar si pertenece a la UE
 
@@ -22,7 +22,7 @@ BEGIN
     from paises where p_id = p_pais_id;
     return v_ue;
 end;
-
+/
 
 --funcion para calcular el total
 
@@ -45,7 +45,7 @@ begin
 
     RETURN v_total;
 end;    
-
+/
 -----------------------------------------------------------
 ------------------------- TOUR ----------------------------
 -----------------------------------------------------------
@@ -73,6 +73,7 @@ begin
     return v_cupos_disponibles;
 
 end;
+/
 
 --funcion para validar la fecha del tour y es vigente 
 create or replace function validar_fecha_tour (p_fecha_tour date)
@@ -89,7 +90,7 @@ begin
         raise_application_error(-20010, 'La fecha seleccionada para le tour no esta disponible');
     end if;
 -- validar que la fecha no es del pasado
-    if p_fecha_tour < trunc(v_ano_actual) THEN
+    if p_fecha_tour < trunc(v_fecha_actual) THEN
         raise_application_error(-20010, 'No se puede inscribir el tour en una fecha pasada');
     end if;   
 
@@ -108,6 +109,7 @@ begin
         end if;    
 
 end;
+/
 -----------------------------------------------------------
 -- Validaciones de clientes 
 -----------------------------------------------------------
@@ -148,9 +150,10 @@ begin
             p_ue AS pais_pertenece_ue
         from clientes c
         left join paises p on c.cli_nac = p.p_id
-        where c_cli_id = p_cli_id;
+        where c.cli_id = p_cli_id;
     return v_cursor;
 end;
+/
 
 -- funcion para validar edad del cliente 
 
@@ -168,6 +171,7 @@ begin
     end if;
     return true;
 end;
+/
 
 -- validar documentacion del cliente 
 
@@ -197,27 +201,38 @@ BEGIN
         end if;
     end if;
 END;
-
+/
 
 -----------------------------------------------------------
 -- Validaciones de fan lego
 -----------------------------------------------------------
 
-create or replace function validar_edad_fan_lego (p_fl_id number)
-return boolean is
-    v_fl_fnac f_lego.fl_fnacimiento%type;
-    v_edad number; 
+CREATE OR REPLACE FUNCTION fn_validar_edad_fan_lego (
+    p_fl_id NUMBER
+)
+RETURN BOOLEAN IS
+    v_fecha_nac f_lego.fl_fnacimiento%TYPE;
+    v_edad_actual NUMBER;
 BEGIN
-
-    select fl_fnacimiento into v_fl_fanc 
-    from f_lego where fl_id = p_fl_id;
-
-    v_edad := edad(v_fl_fnac);
-    if v_edad < 12 or v_edad > 20 then
-        raise_application_error(-20015, 'La edad del fan lego debe estar entre 12 y 20 anos');
-    end if;
-    return true;
-end;
+    
+    SELECT fl_fnacimiento
+    INTO v_fecha_nac
+    FROM f_lego
+    WHERE fl_id = p_fl_id;
+    
+    v_edad_actual := edad(v_fecha_nac);
+    
+    IF v_edad_actual < 12 OR v_edad_actual > 17 THEN
+        RAISE_APPLICATION_ERROR(
+            -20015,
+            'Los Fans LEGO deben tener entre 12 y 17 años. ' ||
+            'Edad actual del fan: ' || v_edad_actual || ' años.'
+        );
+    END IF;
+    
+    RETURN TRUE;
+END fn_validar_edad_fan_lego;
+/
 
 --- funcion para validar que tiene un representante asignado 
 
@@ -241,6 +256,7 @@ begin
     return true;
 
 end;
+/
 
 
 --funcion para obtener los datos del fan lego + representante 
@@ -300,6 +316,7 @@ begin
 
 
 end;
+/
 
 
 --- validar documentacion del fan lego
@@ -334,10 +351,7 @@ begin
     return true;
 
 end;
-
-
-
-
+/
 
 
 
@@ -358,6 +372,7 @@ begin
         raise_application_error(-20006, 'El cliente debe ser mayor a 21 anos');
     end if;
 end;
+/
 
 --trigger para la edad de los fans de lego
 create or replace trigger verificar_edad_fl
@@ -372,17 +387,17 @@ begin
         raise_application_error(-20007, 'Fan lego debe tener entre 12 y 20 anos');
     end if;
 end;
-
+/
 
 --trigger para verificar que la cantidad del producto se puede vender 
 
-create or replace trigger verificar_stock
+/*create or replace trigger verificar_stock
 before insert on det_fact_t
 for each ROW
 declare 
     v_stock_dispo number;
 begin
-    select lot_stock into v_stockv_stock_dispo from lotes 
+    select lot_stock into v_stock_dispo from lotes 
     where lot_prod = :new.det_ft_prod
     AND lot_idtem = :new.det_ft_idtem
     AND lot_tienda = :new.det_ft_tienda
@@ -392,6 +407,8 @@ begin
         raise_application_error(-20006, 'Stock insuficiente');
     end if;
 end;
+/*/
+
 
 --trigger para verificar el limite del producto en el catalago
 create or replace trigger verificar_lim_prod
@@ -410,6 +427,8 @@ BEGIN
         raise_application_error(-20007, 'Se ha superado el limite de compra para este producto en el catalogo');
     end if;
 end;
+/
+
 
 --trigger para el descuento de inventario 
 
@@ -424,7 +443,7 @@ begin
     AND lot_tienda = :new.det_ft_tienda
     AND lot_id = :new.det_ft_lote;
 end;
-
+/
 
 --trigger para descuentos manuales 
 
@@ -438,6 +457,8 @@ BEGIN
     AND lot_prod = :new.d_prod
     AND lot_tienda = :new.d_tienda;
 end;
+/
+
 
 --trigger verificacion descuento manuales 
 
@@ -457,7 +478,7 @@ begin
         raise_application_error(-20007, 'Stock insuficiente para realizar el descuento manual');
     end if;
 end;
-
+/
 
 
 
@@ -474,11 +495,11 @@ begin
 
     if v_ue = 'NO' then 
         if :new.cli_numpas is null or :new.cli_fvenpas is null then
-            raise_application_error (-20000, "Si no pertenece a la Union europea debe indicar los datos de pasaporte");
+            raise_application_error (-2000, 'Si no pertenece a la Union europea debe indicar los datos de pasaporte');
         end if;
     end if;
 end;
-
+/
 
 
 --trigger para nacionalidad de los f_lego
@@ -496,6 +517,8 @@ BEGIN
         end if;
     end if;    
 end;
+/
+
 
 --trigger para solicitar los datos del representante 
 create or replace trigger datos_representante 
@@ -508,6 +531,8 @@ begin
         end if;    
     end if;
 end;
+/
+
 
 --trigger para recargo de envio por pais de residencia de los clientes 
 
@@ -530,6 +555,8 @@ BEGIN
 
     end if;
 end;        
+/
+
 
 --trigger para verificar la edad del cliente en la factura online
 
@@ -541,13 +568,13 @@ for each row
     v_edad number(2);
 BEGIN
     select cli_fnacimiento into v_fnac from clientes where cli_id = :new.fact_o_cli;
-    v_edad := edad(v_edad_cli);
+    v_edad := edad(v_fnac);
 
     if v_edad < 21 then 
         raise_application_error(-20004, 'Solo los clientes mayores a 21 años pueden realizar compras');
     end if;
 end;       
-
+/
 
 --trigger para verificar la edad del cliente en la factura de tienda 
 
@@ -559,13 +586,13 @@ for each row
     v_edad number(2);
 BEGIN
     select cli_fnacimiento into v_fnac from clientes where cli_id = :new.fact_tf_cli;
-    v_edad := edad(v_edad_cli);
+    v_edad := edad(v_fnac);
 
     if v_edad < 21 then 
         raise_application_error(-20004, 'Solo los clientes mayores a 21 años pueden realizar compras');
     end if;
 end;   
-
+/
 
 --trigger para no modificar la factura online
 
@@ -574,6 +601,8 @@ before update on factura_o
 begin
     raise_application_error(-20001, 'Las facturas online no pueden modificarse');
 end;
+/
+
 
 --trigger para no eliminar facturas online
 create or replace trigger no_eliminar_fact_o
@@ -581,6 +610,8 @@ before delete on factura_o
 begin  
     raise_application_error(-20002, 'Las facturas online no pueden eliminarse');
 end;
+/
+
 
 --trigger para no modificar la factura de tienda
 
@@ -589,6 +620,8 @@ before update on factura_tf
 begin
     raise_application_error(-20001, 'Las facturas de tienda no pueden modificarse');
 end;
+/
+
 
 --trigger para no eliminar facturas de tienda
 create or replace trigger no_eliminar_fact_t
@@ -596,6 +629,6 @@ before delete on factura_tf
 begin  
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
-
+/
 
 
