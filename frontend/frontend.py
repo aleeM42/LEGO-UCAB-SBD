@@ -48,15 +48,18 @@ class FrontendLegoTours:
         # Datos
         self.tours_disponibles = []
         self.inscripcion_actual = None
-        self.participantes_agregados = []
+        self.participantes_agregados = []  # Lista de dicts con {tipo, id, datos}
         self.tour_seleccionado = None
         self.fecha_tour_seleccionada = None
+        self.cliente_responsable_id = None
+        self.paises = []  # Lista de países para formularios
         
         # Variables estado
         self.estado_pago = "PENDIENTE"
         
         # Cargar datos
         self.cargar_tours()
+        self.cargar_paises()
         
         # Crear UI
         self.crear_interfaz()
@@ -84,6 +87,27 @@ class FrontendLegoTours:
         thread = threading.Thread(target=_cargar, daemon=True)
         thread.start()
     
+    def cargar_paises(self):
+        """Cargar lista de países desde API"""
+        def _cargar():
+            try:
+                log_event("API", "Cargando países...")
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/paises",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    self.paises = response.json()
+                    log_event("SUCCESS", f"Países cargados: {len(self.paises)}")
+                else:
+                    log_event("ERROR", f"Error cargando países: {response.status_code}")
+            except Exception as e:
+                log_event("ERROR", str(e))
+        
+        thread = threading.Thread(target=_cargar, daemon=True)
+        thread.start()
+    
     def crear_interfaz(self):
         """Crear interfaz gráfica con flujo completo"""
         
@@ -94,16 +118,19 @@ class FrontendLegoTours:
         # Pestaña 1: Seleccionar Tour y Fecha
         self.crear_pestaña_tours()
         
-        # Pestaña 2: Agregar Participantes
+        # Pestaña 2: Registrar Cliente/Fan LEGO
+        self.crear_pestaña_registro()
+        
+        # Pestaña 3: Agregar Participantes
         self.crear_pestaña_participantes()
         
-        # Pestaña 3: Resumen e Inscripción
+        # Pestaña 4: Resumen e Inscripción
         self.crear_pestaña_resumen()
         
-        # Pestaña 4: Pago
+        # Pestaña 5: Pago
         self.crear_pestaña_pago()
         
-        # Pestaña 5: Confirmación
+        # Pestaña 6: Confirmación
         self.crear_pestaña_confirmacion()
     
     def crear_pestaña_tours(self):
@@ -118,19 +145,23 @@ class FrontendLegoTours:
         table_frame = ttk.Frame(frame)
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        columns = ("Fecha", "Cupos Totales", "Costo USD", "Cupos Disponibles")
+        columns = ("Fecha", "Cupos Totales", "Costo USD", "Cupos Disponibles", "Estado", "Tipo")
         self.tours_tree = ttk.Treeview(table_frame, columns=columns, height=10)
         self.tours_tree.column("#0", width=0, stretch=tk.NO)
-        self.tours_tree.column("Fecha", anchor=tk.CENTER, width=150)
-        self.tours_tree.column("Cupos Totales", anchor=tk.CENTER, width=150)
-        self.tours_tree.column("Costo USD", anchor=tk.CENTER, width=150)
-        self.tours_tree.column("Cupos Disponibles", anchor=tk.CENTER, width=150)
+        self.tours_tree.column("Fecha", anchor=tk.CENTER, width=120)
+        self.tours_tree.column("Cupos Totales", anchor=tk.CENTER, width=100)
+        self.tours_tree.column("Costo USD", anchor=tk.CENTER, width=120)
+        self.tours_tree.column("Cupos Disponibles", anchor=tk.CENTER, width=120)
+        self.tours_tree.column("Estado", anchor=tk.CENTER, width=100)
+        self.tours_tree.column("Tipo", anchor=tk.CENTER, width=80)
         
         self.tours_tree.heading("#0", text="")
         self.tours_tree.heading("Fecha", text="Fecha Salida")
         self.tours_tree.heading("Cupos Totales", text="Cupos Totales")
         self.tours_tree.heading("Costo USD", text="Costo por Persona")
         self.tours_tree.heading("Cupos Disponibles", text="Cupos Disponibles")
+        self.tours_tree.heading("Estado", text="Estado")
+        self.tours_tree.heading("Tipo", text="Tipo")
         
         self.tours_tree.pack(fill=tk.BOTH, expand=True)
         
@@ -151,20 +182,39 @@ class FrontendLegoTours:
             self.tours_tree.delete(item)
         
         for tour in self.tours_disponibles:
-            cupos_disponibles = tour.get('cupos_disponibles', tour.get('to_cupos', 0))
+            fecha = tour.get('fecha', '')
+            cupos_totales = tour.get('cupos_totales', 0)
+            costo = tour.get('costo', 0)
+            cupos_disponibles = tour.get('cupos_disponibles', 0)
+            estado = tour.get('estado_inscripcion', 'CERRADA')
+            
+            # Color según disponibilidad y tipo
+            tipo_fecha = tour.get('tipo_fecha', 'FUTURO')
+            tag = "disponible" if cupos_disponibles > 0 and estado == "ABIERTA" and tipo_fecha == "FUTURO" else "cerrado"
+            if tipo_fecha == "PASADO":
+                tag = "pasado"
+            
             self.tours_tree.insert(
                 "",
                 tk.END,
                 values=(
-                    tour.get('fecha', tour.get('to_fini', '')),
-                    tour.get('cupos_totales', tour.get('to_cupos', 0)),
-                    f"${tour.get('costo', tour.get('to_costo', 0)):.2f}",
-                    cupos_disponibles
-                )
+                    fecha,
+                    cupos_totales,
+                    f"${costo:.2f}",
+                    cupos_disponibles,
+                    estado,
+                    tipo_fecha
+                ),
+                tags=(tag,)
             )
+        
+        # Configurar colores
+        self.tours_tree.tag_configure("disponible", foreground="green")
+        self.tours_tree.tag_configure("cerrado", foreground="orange")
+        self.tours_tree.tag_configure("pasado", foreground="gray")
     
     def seleccionar_tour(self):
-        """Seleccionar tour"""
+        """Seleccionar tour y verificar cupos disponibles"""
         selection = self.tours_tree.selection()
         if not selection:
             messagebox.showwarning("Advertencia", "Selecciona un tour primero")
@@ -173,12 +223,51 @@ class FrontendLegoTours:
         item = self.tours_tree.item(selection[0])
         values = item["values"]
         
-        self.fecha_tour_seleccionada = values[0]
+        fecha_tour = values[0]
+        cupos_disponibles = int(values[3])
+        estado = values[4] if len(values) > 4 else "CERRADA"
+        
+        # Verificar cupos disponibles usando la función de BD
+        def _verificar_cupos():
+            try:
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/tours/{fecha_tour}/cupos",
+                    timeout=API_TIMEOUT
+                )
+                if response.status_code == 200:
+                    data = response.json()
+                    cupos_reales = data.get('cupos_disponibles', 0)
+                    
+                    self.root.after(0, lambda: self._confirmar_seleccion_tour(
+                        fecha_tour, values, cupos_reales, estado
+                    ))
+                else:
+                    self.root.after(0, lambda: messagebox.showerror(
+                        "Error", f"Error verificando cupos: {response.json().get('error', 'Desconocido')}"
+                    ))
+            except Exception as e:
+                self.root.after(0, lambda: messagebox.showerror("Error", f"Error: {e}"))
+        
+        thread = threading.Thread(target=_verificar_cupos, daemon=True)
+        thread.start()
+    
+    def _confirmar_seleccion_tour(self, fecha_tour, values, cupos_reales, estado):
+        """Confirmar selección de tour después de verificar cupos"""
+        if cupos_reales <= 0:
+            messagebox.showwarning("Sin cupos", f"No hay cupos disponibles para el tour del {fecha_tour}")
+            return
+        
+        if estado != "ABIERTA":
+            messagebox.showwarning("Inscripción cerrada", f"El período de inscripción para este tour está cerrado")
+            return
+        
+        self.fecha_tour_seleccionada = fecha_tour
+        costo_str = values[2].replace("$", "").replace(",", "")
         self.tour_seleccionado = {
-            "fecha": values[0],
+            "fecha": fecha_tour,
             "cupos_totales": int(values[1]),
-            "costo_unitario": float(values[2].replace("$", "")),
-            "cupos_disponibles": int(values[3])
+            "costo_unitario": float(costo_str),
+            "cupos_disponibles": cupos_reales
         }
         
         self.label_tour_info.config(
@@ -187,14 +276,398 @@ class FrontendLegoTours:
                  f"{self.tour_seleccionado['cupos_disponibles']} cupos disponibles",
             foreground="green"
         )
+        if hasattr(self, "label_part_tour"):
+            self.label_part_tour.config(
+            text=f"Tour seleccionado: {self.tour_seleccionado['fecha']} "
+                 f"({self.tour_seleccionado['cupos_disponibles']} cupos)",
+            foreground="green"
+        )
         
-        log_event("TOUR", f"Seleccionado: {self.fecha_tour_seleccionada}")
-        messagebox.showinfo("Éxito", f"✓ Tour seleccionado: {self.fecha_tour_seleccionada}")
+        log_event("TOUR", f"Seleccionado: {self.fecha_tour_seleccionada} - {cupos_reales} cupos")
+        messagebox.showinfo("Éxito", f"✓ Tour seleccionado: {self.fecha_tour_seleccionada}\nCupos disponibles: {cupos_reales}")
+    
+    def crear_pestaña_registro(self):
+        """Pestaña 2: Registrar Cliente o Fan LEGO"""
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text="2️⃣ Registrar")
+        
+        # Título
+        ttk.Label(frame, text="📝 Registrar Cliente o Fan LEGO", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Notebook interno para Cliente y Fan LEGO
+        notebook_registro = ttk.Notebook(frame)
+        notebook_registro.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        # Sub-pestaña: Registrar Cliente
+        self.crear_formulario_cliente(notebook_registro)
+        
+        # Sub-pestaña: Registrar Fan LEGO
+        self.crear_formulario_fan_lego(notebook_registro)
+    
+    def crear_formulario_cliente(self, parent):
+        """Formulario para registrar nuevo cliente"""
+        frame = ttk.Frame(parent)
+        parent.add(frame, text="Cliente Adulto")
+        
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable = ttk.Frame(canvas)
+        
+        scrollable.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        form_frame = ttk.LabelFrame(scrollable, text="Datos del Cliente")
+        form_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Primer nombre
+        ttk.Label(form_frame, text="Primer Nombre *:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_pnombre = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_pnombre.grid(row=0, column=1, padx=10, pady=8)
+        
+        # Segundo nombre (opcional)
+        ttk.Label(form_frame, text="Segundo Nombre:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_snombre = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_snombre.grid(row=1, column=1, padx=10, pady=8)
+        
+        # Primer apellido
+        ttk.Label(form_frame, text="Primer Apellido *:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_papellido = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_papellido.grid(row=2, column=1, padx=10, pady=8)
+        
+        # Segundo apellido
+        ttk.Label(form_frame, text="Segundo Apellido *:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_sapellido = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_sapellido.grid(row=3, column=1, padx=10, pady=8)
+        
+        # DNI
+        ttk.Label(form_frame, text="DNI *:").grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_dni = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_dni.grid(row=4, column=1, padx=10, pady=8)
+        
+        # Fecha nacimiento
+        ttk.Label(form_frame, text="Fecha Nacimiento (YYYY-MM-DD) *:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_fnac = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_fnac.grid(row=5, column=1, padx=10, pady=8)
+        
+        # País nacionalidad
+        ttk.Label(form_frame, text="País Nacionalidad *:").grid(row=6, column=0, sticky=tk.W, padx=10, pady=8)
+        self.combo_reg_cli_nac = ttk.Combobox(form_frame, width=37, state="readonly")
+        self.combo_reg_cli_nac.grid(row=6, column=1, padx=10, pady=8)
+        
+        # País residencia
+        ttk.Label(form_frame, text="País Residencia *:").grid(row=7, column=0, sticky=tk.W, padx=10, pady=8)
+        self.combo_reg_cli_reside = ttk.Combobox(form_frame, width=37, state="readonly")
+        self.combo_reg_cli_reside.grid(row=7, column=1, padx=10, pady=8)
+        
+        # Pasaporte
+        ttk.Label(form_frame, text="Número Pasaporte:").grid(row=8, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_numpas = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_numpas.grid(row=8, column=1, padx=10, pady=8)
+        
+        # Fecha vencimiento pasaporte
+        ttk.Label(form_frame, text="Vencimiento Pasaporte (YYYY-MM-DD):").grid(row=9, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_cli_fvenpas = ttk.Entry(form_frame, width=40)
+        self.entry_reg_cli_fvenpas.grid(row=9, column=1, padx=10, pady=8)
+        
+        # Botones
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=10, column=0, columnspan=2, pady=15)
+        
+        ttk.Button(button_frame, text="💾 REGISTRAR CLIENTE", 
+                  command=self.registrar_cliente_nuevo).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🔄 LIMPIAR", 
+                  command=self.limpiar_formulario_cliente).pack(side=tk.LEFT, padx=5)
+        
+        # Resultado
+        self.label_reg_cli_resultado = ttk.Label(form_frame, text="", foreground="green")
+        self.label_reg_cli_resultado.grid(row=11, column=0, columnspan=2, pady=10)
+        
+        # Actualizar combos cuando se carguen los países
+        def actualizar_combos():
+            if self.paises:
+                paises_list = [f"{p['p_id']} - {p['p_nom']}" for p in self.paises]
+                self.combo_reg_cli_nac['values'] = paises_list
+                self.combo_reg_cli_reside['values'] = paises_list
+        
+        self.root.after(1000, actualizar_combos)
+    
+    def crear_formulario_fan_lego(self, parent):
+        """Formulario para registrar nuevo fan LEGO"""
+        frame = ttk.Frame(parent)
+        parent.add(frame, text="Fan LEGO Menor")
+        
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+        scrollable = ttk.Frame(canvas)
+        
+        scrollable.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        form_frame = ttk.LabelFrame(scrollable, text="Datos del Fan LEGO")
+        form_frame.pack(fill=tk.X, padx=10, pady=10)
+        
+        # Primer nombre
+        ttk.Label(form_frame, text="Primer Nombre *:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_pnombre = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_pnombre.grid(row=0, column=1, padx=10, pady=8)
+        
+        # Segundo nombre
+        ttk.Label(form_frame, text="Segundo Nombre:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_snombre = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_snombre.grid(row=1, column=1, padx=10, pady=8)
+        
+        # Primer apellido
+        ttk.Label(form_frame, text="Primer Apellido *:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_papellido = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_papellido.grid(row=2, column=1, padx=10, pady=8)
+        
+        # Segundo apellido
+        ttk.Label(form_frame, text="Segundo Apellido *:").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_sapellido = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_sapellido.grid(row=3, column=1, padx=10, pady=8)
+        
+        # DNI
+        ttk.Label(form_frame, text="DNI *:").grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_dni = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_dni.grid(row=4, column=1, padx=10, pady=8)
+        
+        # Fecha nacimiento
+        ttk.Label(form_frame, text="Fecha Nacimiento (YYYY-MM-DD) *:").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_fnac = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_fnac.grid(row=5, column=1, padx=10, pady=8)
+        
+        # País nacionalidad
+        ttk.Label(form_frame, text="País Nacionalidad *:").grid(row=6, column=0, sticky=tk.W, padx=10, pady=8)
+        self.combo_reg_fl_nac = ttk.Combobox(form_frame, width=37, state="readonly")
+        self.combo_reg_fl_nac.grid(row=6, column=1, padx=10, pady=8)
+        
+        # Pasaporte
+        ttk.Label(form_frame, text="Número Pasaporte:").grid(row=7, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_numpas = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_numpas.grid(row=7, column=1, padx=10, pady=8)
+        
+        # Fecha vencimiento pasaporte
+        ttk.Label(form_frame, text="Vencimiento Pasaporte (YYYY-MM-DD):").grid(row=8, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_fvenpas = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_fvenpas.grid(row=8, column=1, padx=10, pady=8)
+        
+        # Representante (ID cliente)
+        ttk.Label(form_frame, text="ID Representante (Cliente):").grid(row=9, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_reg_fl_repre = ttk.Entry(form_frame, width=40)
+        self.entry_reg_fl_repre.grid(row=9, column=1, padx=10, pady=8)
+        
+        # Botones
+        button_frame = ttk.Frame(form_frame)
+        button_frame.grid(row=10, column=0, columnspan=2, pady=15)
+        
+        ttk.Button(button_frame, text="💾 REGISTRAR FAN LEGO", 
+                  command=self.registrar_fan_lego_nuevo).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="🔄 LIMPIAR", 
+                  command=self.limpiar_formulario_fan_lego).pack(side=tk.LEFT, padx=5)
+        
+        # Resultado
+        self.label_reg_fl_resultado = ttk.Label(form_frame, text="", foreground="green")
+        self.label_reg_fl_resultado.grid(row=11, column=0, columnspan=2, pady=10)
+        
+        # Actualizar combo cuando se carguen los países
+        def actualizar_combo():
+            if self.paises:
+                paises_list = [f"{p['p_id']} - {p['p_nom']}" for p in self.paises]
+                self.combo_reg_fl_nac['values'] = paises_list
+        
+        self.root.after(1000, actualizar_combo)
+    
+    def registrar_cliente_nuevo(self):
+        """Registrar nuevo cliente"""
+        try:
+            # Obtener datos del formulario
+            p_pnombre = self.entry_reg_cli_pnombre.get().strip()
+            p_snombre = self.entry_reg_cli_snombre.get().strip() or None
+            p_papellido = self.entry_reg_cli_papellido.get().strip()
+            p_sapellido = self.entry_reg_cli_sapellido.get().strip()
+            p_dni = self.entry_reg_cli_dni.get().strip()
+            p_fnacimiento = self.entry_reg_cli_fnac.get().strip()
+            
+            # Obtener IDs de países
+            nac_str = self.combo_reg_cli_nac.get()
+            reside_str = self.combo_reg_cli_reside.get()
+            
+            if not nac_str or not reside_str:
+                messagebox.showwarning("Error", "Selecciona los países de nacionalidad y residencia")
+                return
+            
+            p_nac = int(nac_str.split(" - ")[0])
+            p_reside = int(reside_str.split(" - ")[0])
+            
+            p_numpas = self.entry_reg_cli_numpas.get().strip() or None
+            p_fvenpas = self.entry_reg_cli_fvenpas.get().strip() or None
+            
+            # Validar campos obligatorios
+            if not all([p_pnombre, p_papellido, p_sapellido, p_dni, p_fnacimiento]):
+                messagebox.showwarning("Error", "Completa todos los campos obligatorios (*)")
+                return
+            
+            payload = {
+                "p_pnombre": p_pnombre,
+                "p_papellido": p_papellido,
+                "p_sapellido": p_sapellido,
+                "p_dni": int(p_dni),
+                "p_fnacimiento": p_fnacimiento,
+                "p_nac": p_nac,
+                "p_reside": p_reside,
+                "p_snombre": p_snombre,
+                "p_numpas": p_numpas,
+                "p_fvenpas": p_fvenpas
+            }
+            
+            log_event("API", "Registrando nuevo cliente...")
+            response = requests.post(
+                f"{API_BASE_URL}/api/v1/clientes/registrar",
+                json=payload,
+                timeout=API_TIMEOUT
+            )
+            
+            if response.status_code == 201:
+                resultado = response.json()
+                cli_id = resultado.get('cli_id')
+                self.label_reg_cli_resultado.config(
+                    text=f"✓ Cliente registrado exitosamente. ID: {cli_id}",
+                    foreground="green"
+                )
+                log_event("SUCCESS", f"Cliente registrado: ID {cli_id}")
+                messagebox.showinfo("Éxito", f"✓ Cliente registrado exitosamente\nID: {cli_id}\n\nPuedes usar este ID para agregarlo como participante.")
+            else:
+                error_msg = response.json().get('error', f"Error {response.status_code}")
+                self.label_reg_cli_resultado.config(
+                    text=f"✗ Error: {error_msg}",
+                    foreground="red"
+                )
+                messagebox.showerror("Error", f"Error registrando cliente: {error_msg}")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Error en los datos: {e}")
+        except Exception as e:
+            log_event("ERROR", str(e))
+            messagebox.showerror("Error", f"Error: {e}")
+    
+    def registrar_fan_lego_nuevo(self):
+        """Registrar nuevo fan LEGO"""
+        try:
+            # Obtener datos del formulario
+            fl_pnombre = self.entry_reg_fl_pnombre.get().strip()
+            fl_snombre = self.entry_reg_fl_snombre.get().strip() or None
+            fl_papellido = self.entry_reg_fl_papellido.get().strip()
+            fl_sapellido = self.entry_reg_fl_sapellido.get().strip()
+            fl_dni = self.entry_reg_fl_dni.get().strip()
+            fl_fnacimiento = self.entry_reg_fl_fnac.get().strip()
+            
+            # Obtener ID de país
+            nac_str = self.combo_reg_fl_nac.get()
+            if not nac_str:
+                messagebox.showwarning("Error", "Selecciona el país de nacionalidad")
+                return
+            
+            fl_nac = int(nac_str.split(" - ")[0])
+            
+            fl_numpas = self.entry_reg_fl_numpas.get().strip() or None
+            fl_fvenpas = self.entry_reg_fl_fvenpas.get().strip() or None
+            fl_repre_str = self.entry_reg_fl_repre.get().strip()
+            fl_repre = int(fl_repre_str) if fl_repre_str else None
+            
+            # Validar campos obligatorios
+            if not all([fl_pnombre, fl_papellido, fl_sapellido, fl_dni, fl_fnacimiento]):
+                messagebox.showwarning("Error", "Completa todos los campos obligatorios (*)")
+                return
+            
+            payload = {
+                "fl_pnombre": fl_pnombre,
+                "fl_papellido": fl_papellido,
+                "fl_sapellido": fl_sapellido,
+                "fl_dni": int(fl_dni),
+                "fl_fnacimiento": fl_fnacimiento,
+                "fl_nac": fl_nac,
+                "fl_snombre": fl_snombre,
+                "fl_numpas": fl_numpas,
+                "fl_fvenpas": fl_fvenpas,
+                "fl_repre": fl_repre
+            }
+            
+            log_event("API", "Registrando nuevo fan LEGO...")
+            response = requests.post(
+                f"{API_BASE_URL}/api/v1/fans-lego/registrar",
+                json=payload,
+                timeout=API_TIMEOUT
+            )
+            
+            if response.status_code == 201:
+                resultado = response.json()
+                fl_id = resultado.get('fl_id')
+                self.label_reg_fl_resultado.config(
+                    text=f"✓ Fan LEGO registrado exitosamente. ID: {fl_id}",
+                    foreground="green"
+                )
+                log_event("SUCCESS", f"Fan LEGO registrado: ID {fl_id}")
+                messagebox.showinfo("Éxito", f"✓ Fan LEGO registrado exitosamente\nID: {fl_id}\n\nPuedes usar este ID para agregarlo como participante.")
+            else:
+                error_msg = response.json().get('error', f"Error {response.status_code}")
+                self.label_reg_fl_resultado.config(
+                    text=f"✗ Error: {error_msg}",
+                    foreground="red"
+                )
+                messagebox.showerror("Error", f"Error registrando fan LEGO: {error_msg}")
+        except ValueError as e:
+            messagebox.showerror("Error", f"Error en los datos: {e}")
+        except Exception as e:
+            log_event("ERROR", str(e))
+            messagebox.showerror("Error", f"Error: {e}")
+    
+    def limpiar_formulario_cliente(self):
+        """Limpiar formulario de cliente"""
+        self.entry_reg_cli_pnombre.delete(0, tk.END)
+        self.entry_reg_cli_snombre.delete(0, tk.END)
+        self.entry_reg_cli_papellido.delete(0, tk.END)
+        self.entry_reg_cli_sapellido.delete(0, tk.END)
+        self.entry_reg_cli_dni.delete(0, tk.END)
+        self.entry_reg_cli_fnac.delete(0, tk.END)
+        self.combo_reg_cli_nac.set("")
+        self.combo_reg_cli_reside.set("")
+        self.entry_reg_cli_numpas.delete(0, tk.END)
+        self.entry_reg_cli_fvenpas.delete(0, tk.END)
+        self.label_reg_cli_resultado.config(text="")
+    
+    def limpiar_formulario_fan_lego(self):
+        """Limpiar formulario de fan LEGO"""
+        self.entry_reg_fl_pnombre.delete(0, tk.END)
+        self.entry_reg_fl_snombre.delete(0, tk.END)
+        self.entry_reg_fl_papellido.delete(0, tk.END)
+        self.entry_reg_fl_sapellido.delete(0, tk.END)
+        self.entry_reg_fl_dni.delete(0, tk.END)
+        self.entry_reg_fl_fnac.delete(0, tk.END)
+        self.combo_reg_fl_nac.set("")
+        self.entry_reg_fl_numpas.delete(0, tk.END)
+        self.entry_reg_fl_fvenpas.delete(0, tk.END)
+        self.entry_reg_fl_repre.delete(0, tk.END)
+        self.label_reg_fl_resultado.config(text="")
     
     def crear_pestaña_participantes(self):
         """Pestaña 2: Agregar Participantes"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="2️⃣ Participantes")
+        self.notebook.add(frame, text="3️⃣ Participantes")
         
         # Título
         ttk.Label(frame, text="👥 Agregar Participantes", font=("Arial", 16, "bold")).pack(pady=15)
@@ -221,88 +694,271 @@ class FrontendLegoTours:
         self.label_part_tour = ttk.Label(info_frame, text="No seleccionado", foreground="red")
         self.label_part_tour.pack(pady=10)
         
+        # Cliente Responsable
+        responsable_frame = ttk.LabelFrame(scrollable, text="Cliente Responsable")
+        responsable_frame.pack(fill=tk.X, padx=10, pady=5)
+        
+        ttk.Label(responsable_frame, text="ID Cliente Responsable:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_cli_responsable = ttk.Entry(responsable_frame, width=20)
+        self.entry_cli_responsable.grid(row=0, column=1, padx=10, pady=8)
+        ttk.Button(responsable_frame, text="🔍 CONSULTAR", 
+                  command=self.consultar_cliente_responsable).grid(row=0, column=2, padx=5)
+        
+        self.label_cli_responsable = ttk.Label(responsable_frame, text="No consultado", foreground="red")
+        self.label_cli_responsable.grid(row=1, column=0, columnspan=3, padx=10, pady=5)
+        
         # Formulario participante
-        form_frame = ttk.LabelFrame(scrollable, text="Datos del Participante")
+        form_frame = ttk.LabelFrame(scrollable, text="Agregar Participante por ID")
         form_frame.pack(fill=tk.X, padx=10, pady=5)
         
         # Tipo participante
         ttk.Label(form_frame, text="Tipo:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
         self.combo_tipo = ttk.Combobox(form_frame, values=["ADULTO", "MENOR"], state="readonly", width=20)
         self.combo_tipo.grid(row=0, column=1, padx=10, pady=8)
+        self.combo_tipo.bind("<<ComboboxSelected>>", self.on_tipo_changed)
         
-        # Nombre
-        ttk.Label(form_frame, text="Nombre Completo:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_nombre = ttk.Entry(form_frame, width=40)
-        self.entry_nombre.grid(row=1, column=1, padx=10, pady=8)
+        # ID del participante
+        ttk.Label(form_frame, text="ID Cliente o Fan LEGO:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_id_participante = ttk.Entry(form_frame, width=20)
+        self.entry_id_participante.grid(row=1, column=1, padx=10, pady=8)
+        ttk.Button(form_frame, text="🔍 CONSULTAR DATOS", 
+                  command=self.consultar_participante).grid(row=1, column=2, padx=5)
         
-        # DNI
-        ttk.Label(form_frame, text="DNI:").grid(row=2, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_dni = ttk.Entry(form_frame, width=40)
-        self.entry_dni.grid(row=2, column=1, padx=10, pady=8)
+        # Área de datos consultados
+        datos_frame = ttk.LabelFrame(scrollable, text="Datos Consultados")
+        datos_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=5)
         
-        # Fecha Nacimiento
-        ttk.Label(form_frame, text="Fecha Nacimiento (YYYY-MM-DD):").grid(row=3, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_fnac = ttk.Entry(form_frame, width=40)
-        self.entry_fnac.grid(row=3, column=1, padx=10, pady=8)
-        
-        # País Nacionalidad
-        ttk.Label(form_frame, text="País Nacionalidad:").grid(row=4, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_pais_nac = ttk.Entry(form_frame, width=40)
-        self.entry_pais_nac.grid(row=4, column=1, padx=10, pady=8)
-        
-        # Pasaporte (si no es UE)
-        ttk.Label(form_frame, text="Pasaporte (si aplica):").grid(row=5, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_pasaporte = ttk.Entry(form_frame, width=40)
-        self.entry_pasaporte.grid(row=5, column=1, padx=10, pady=8)
+        self.text_datos = scrolledtext.ScrolledText(datos_frame, width=80, height=10, wrap=tk.WORD)
+        self.text_datos.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
         # Botones
         button_frame = ttk.Frame(form_frame)
-        button_frame.grid(row=6, column=0, columnspan=2, pady=15)
+        button_frame.grid(row=2, column=0, columnspan=3, pady=15)
         
-        ttk.Button(button_frame, text="➕ AGREGAR PARTICIPANTE", 
+        ttk.Button(button_frame, text="➕ AGREGAR A INSCRIPCIÓN", 
                   command=self.agregar_participante).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="🔄 LIMPIAR", 
                   command=self.limpiar_participante).pack(side=tk.LEFT, padx=5)
         
         # Tabla participantes agregados
-        table_frame = ttk.LabelFrame(scrollable, text="Participantes Agregados")
+        table_frame = ttk.LabelFrame(scrollable, text="Participantes Agregados a la Inscripción")
         table_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
         
-        columns = ("#", "Tipo", "Nombre", "DNI", "Fecha Nac.", "País")
+        columns = ("#", "Tipo", "ID", "Nombre", "DNI", "Edad", "País")
         self.part_tree = ttk.Treeview(table_frame, columns=columns, height=8)
         self.part_tree.column("#0", width=0, stretch=tk.NO)
         self.part_tree.column("#", anchor=tk.CENTER, width=40)
         self.part_tree.column("Tipo", anchor=tk.CENTER, width=80)
-        self.part_tree.column("Nombre", anchor=tk.W, width=150)
+        self.part_tree.column("ID", anchor=tk.CENTER, width=60)
+        self.part_tree.column("Nombre", anchor=tk.W, width=200)
         self.part_tree.column("DNI", anchor=tk.CENTER, width=100)
-        self.part_tree.column("Fecha Nac.", anchor=tk.CENTER, width=100)
+        self.part_tree.column("Edad", anchor=tk.CENTER, width=60)
         self.part_tree.column("País", anchor=tk.W, width=150)
         
         self.part_tree.heading("#0", text="")
         self.part_tree.heading("#", text="#")
         self.part_tree.heading("Tipo", text="Tipo")
-        self.part_tree.heading("Nombre", text="Nombre")
+        self.part_tree.heading("ID", text="ID")
+        self.part_tree.heading("Nombre", text="Nombre Completo")
         self.part_tree.heading("DNI", text="DNI")
-        self.part_tree.heading("Fecha Nac.", text="F. Nac.")
+        self.part_tree.heading("Edad", text="Edad")
         self.part_tree.heading("País", text="País")
         
         self.part_tree.pack(fill=tk.BOTH, expand=True)
     
-    def agregar_participante(self):
-        """Agregar participante"""
+        # Variables para datos consultados
+        self.participante_consultado = None
+        self.representante_consultado = None
+    
+    def on_tipo_changed(self, event=None):
+        """Cuando cambia el tipo de participante"""
+        self.participante_consultado = None
+        self.representante_consultado = None
+        self.text_datos.delete(1.0, tk.END)
+    
+    def consultar_cliente_responsable(self):
+        """Consultar datos del cliente responsable"""
+        cli_id_str = self.entry_cli_responsable.get().strip()
+        if not cli_id_str:
+            messagebox.showwarning("Error", "Ingresa un ID de cliente")
+            return
+        
+        try:
+            cli_id = int(cli_id_str)
+            log_event("API", f"Consultando cliente responsable: {cli_id}")
+            
+            response = requests.get(
+                f"{API_BASE_URL}/api/v1/clientes/{cli_id}",
+                timeout=API_TIMEOUT
+            )
+            
+            if response.status_code == 200:
+                data = response.json()
+                self.cliente_responsable_id = cli_id
+                nombre_completo = f"{data.get('cli_pnombre', '')} {data.get('cli_papellido', '')} {data.get('cli_sapellido', '')}"
+                self.label_cli_responsable.config(
+                    text=f"✓ {nombre_completo} (ID: {cli_id}, Edad: {data.get('edad_calculada', 'N/A')})",
+                    foreground="green"
+                )
+                log_event("SUCCESS", f"Cliente responsable consultado: {nombre_completo}")
+            else:
+                error_msg = response.json().get('error', 'Error desconocido')
+                self.label_cli_responsable.config(text=f"✗ Error: {error_msg}", foreground="red")
+                messagebox.showerror("Error", f"Error consultando cliente: {error_msg}")
+        except ValueError:
+            messagebox.showerror("Error", "ID debe ser un número")
+        except Exception as e:
+            log_event("ERROR", str(e))
+            messagebox.showerror("Error", f"Error: {e}")
+    
+    def consultar_participante(self):
+        """Consultar datos del participante (cliente o fan LEGO)"""
         if not self.tour_seleccionado:
             messagebox.showwarning("Advertencia", "Selecciona un tour primero")
             return
         
         tipo = self.combo_tipo.get()
-        nombre = self.entry_nombre.get().strip()
-        dni = self.entry_dni.get().strip()
-        fnac = self.entry_fnac.get().strip()
-        pais = self.entry_pais_nac.get().strip()
-        pasaporte = self.entry_pasaporte.get().strip()
+        if not tipo:
+            messagebox.showwarning("Error", "Selecciona el tipo de participante")
+            return
         
-        if not all([tipo, nombre, dni, fnac, pais]):
-            messagebox.showwarning("Error", "Completa todos los campos obligatorios")
+        id_str = self.entry_id_participante.get().strip()
+        if not id_str:
+            messagebox.showwarning("Error", "Ingresa un ID")
+            return
+        
+        try:
+            participante_id = int(id_str)
+            
+            def _consultar():
+                try:
+                    if tipo == "ADULTO":
+                        # Consultar cliente
+                        log_event("API", f"Consultando cliente: {participante_id}")
+                        response = requests.get(
+                            f"{API_BASE_URL}/api/v1/clientes/{participante_id}",
+                            timeout=API_TIMEOUT
+                        )
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            self.participante_consultado = {
+                                "tipo": "ADULTO",
+                                "id": participante_id,
+                                "datos": data
+                            }
+                            self.representante_consultado = None
+                            
+                            nombre = f"{data.get('cli_pnombre', '')} {data.get('cli_papellido', '')} {data.get('cli_sapellido', '')}"
+                            info = f"""DATOS DEL CLIENTE (ADULTO):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ID: {participante_id}
+Nombre: {nombre}
+DNI: {data.get('cli_dni', 'N/A')}
+Fecha Nacimiento: {data.get('cli_fnacimiento', 'N/A')}
+Edad: {data.get('edad_calculada', 'N/A')} años
+País: {data.get('pais_nombre', 'N/A')}
+Pertenece UE: {data.get('pais_pertenece_ue', 'NO')}
+Pasaporte: {data.get('cli_numpas', 'No requerido')}
+Vencimiento Pasaporte: {data.get('cli_fvenpas', 'N/A')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+                            
+                            self.root.after(0, lambda: self._mostrar_datos_consultados(info))
+                        else:
+                            error_msg = response.json().get('error', 'Error desconocido')
+                            self.root.after(0, lambda: messagebox.showerror("Error", f"Error consultando cliente: {error_msg}"))
+                    
+                    elif tipo == "MENOR":
+                        # Consultar fan LEGO
+                        log_event("API", f"Consultando fan LEGO: {participante_id}")
+                        response = requests.get(
+                            f"{API_BASE_URL}/api/v1/fans-lego/{participante_id}",
+                            timeout=API_TIMEOUT
+                        )
+                        
+                        if response.status_code == 200:
+                            data = response.json()
+                            self.participante_consultado = {
+                                "tipo": "MENOR",
+                                "id": participante_id,
+                                "datos": data
+                            }
+                            
+                            # Obtener datos del representante automáticamente
+                            rep_id = data.get('rep_cli_id')
+                            if rep_id:
+                                log_event("API", f"Consultando representante: {rep_id}")
+                                rep_response = requests.get(
+                                    f"{API_BASE_URL}/api/v1/clientes/{rep_id}",
+                                    timeout=API_TIMEOUT
+                                )
+                                if rep_response.status_code == 200:
+                                    self.representante_consultado = {
+                                        "id": rep_id,
+                                        "datos": rep_response.json()
+                                    }
+                            
+                            nombre_fan = f"{data.get('fl_pnombre', '')} {data.get('fl_papellido', '')} {data.get('fl_sapellido', '')}"
+                            nombre_rep = ""
+                            if self.representante_consultado:
+                                rep_data = self.representante_consultado['datos']
+                                nombre_rep = f"{rep_data.get('cli_pnombre', '')} {rep_data.get('cli_papellido', '')} {rep_data.get('cli_sapellido', '')}"
+                            
+                            info = f"""DATOS DEL FAN LEGO (MENOR):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ID: {participante_id}
+Nombre: {nombre_fan}
+DNI: {data.get('fl_dni', 'N/A')}
+Fecha Nacimiento: {data.get('fl_fnacimiento', 'N/A')}
+Edad: {data.get('edad_fan', 'N/A')} años
+País: {data.get('pais_fan_nombre', 'N/A')}
+Pertenece UE: {data.get('pais_fan_ue', 'NO')}
+Pasaporte: {data.get('fl_numpas', 'No requerido')}
+Vencimiento Pasaporte: {data.get('fl_fvenpas', 'N/A')}
+
+DATOS DEL REPRESENTANTE (AUTOMÁTICO):
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+                            
+                            if self.representante_consultado:
+                                rep_data = self.representante_consultado['datos']
+                                info += f"""
+ID: {rep_id}
+Nombre: {nombre_rep}
+DNI: {rep_data.get('cli_dni', 'N/A')}
+Fecha Nacimiento: {rep_data.get('cli_fnacimiento', 'N/A')}
+Edad: {rep_data.get('edad_calculada', 'N/A')} años
+País: {rep_data.get('pais_nombre', 'N/A')}
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"""
+                            else:
+                                info += "\n⚠️ No se encontró representante asignado"
+                            
+                            self.root.after(0, lambda: self._mostrar_datos_consultados(info))
+                        else:
+                            error_msg = response.json().get('error', 'Error desconocido')
+                            self.root.after(0, lambda: messagebox.showerror("Error", f"Error consultando fan LEGO: {error_msg}"))
+                
+                except Exception as e:
+                    self.root.after(0, lambda: messagebox.showerror("Error", f"Error: {e}"))
+            
+            thread = threading.Thread(target=_consultar, daemon=True)
+            thread.start()
+            
+        except ValueError:
+            messagebox.showerror("Error", "ID debe ser un número")
+    
+    def _mostrar_datos_consultados(self, info):
+        """Mostrar datos consultados en el área de texto"""
+        self.text_datos.delete(1.0, tk.END)
+        self.text_datos.insert(tk.END, info)
+    
+    def agregar_participante(self):
+        """Agregar participante consultado a la inscripción"""
+        if not self.tour_seleccionado:
+            messagebox.showwarning("Advertencia", "Selecciona un tour primero")
+            return
+        
+        if not self.participante_consultado:
+            messagebox.showwarning("Error", "Consulta los datos del participante primero")
             return
         
         # Validar cupos
@@ -310,17 +966,60 @@ class FrontendLegoTours:
             messagebox.showwarning("Error", "No hay cupos disponibles para más participantes")
             return
         
+        # Agregar participante
         participante = {
             "numero": len(self.participantes_agregados) + 1,
-            "tipo": tipo,
-            "nombre": nombre,
-            "dni": dni,
-            "fnacimiento": fnac,
-            "pais_nacionalidad": pais,
-            "pasaporte": pasaporte if pasaporte else None
+            "tipo": self.participante_consultado["tipo"],
+            "id": self.participante_consultado["id"],
+            "datos": self.participante_consultado["datos"]
         }
         
+        # Si es fan LEGO y tiene representante, agregarlo también si no está ya agregado
+        if self.participante_consultado["tipo"] == "MENOR" and self.representante_consultado:
+            rep_id = self.representante_consultado["id"]
+            # Verificar si el representante ya está agregado
+            rep_ya_agregado = any(p.get("id") == rep_id for p in self.participantes_agregados)
+            if not rep_ya_agregado:
+                # Agregar representante como ADULTO
+                rep_data = self.representante_consultado["datos"]
+                rep_participante = {
+                    "numero": len(self.participantes_agregados) + 2,
+                    "tipo": "ADULTO",
+                    "id": rep_id,
+                    "datos": rep_data
+                }
+                self.participantes_agregados.append(rep_participante)
+                
+                # Agregar a la tabla
+                nombre_rep = f"{rep_data.get('cli_pnombre', '')} {rep_data.get('cli_papellido', '')} {rep_data.get('cli_sapellido', '')}"
+                self.part_tree.insert(
+                    "",
+                    tk.END,
+                    values=(
+                        rep_participante["numero"],
+                        "ADULTO",
+                        rep_id,
+                        nombre_rep,
+                        rep_data.get('cli_dni', 'N/A'),
+                        rep_data.get('edad_calculada', 'N/A'),
+                        rep_data.get('pais_nombre', 'N/A')
+                    )
+                )
+        
         self.participantes_agregados.append(participante)
+        
+        # Agregar a la tabla
+        datos = participante["datos"]
+        if participante["tipo"] == "ADULTO":
+            nombre = f"{datos.get('cli_pnombre', '')} {datos.get('cli_papellido', '')} {datos.get('cli_sapellido', '')}"
+            dni = datos.get('cli_dni', 'N/A')
+            edad = datos.get('edad_calculada', 'N/A')
+            pais = datos.get('pais_nombre', 'N/A')
+        else:  # MENOR
+            nombre = f"{datos.get('fl_pnombre', '')} {datos.get('fl_papellido', '')} {datos.get('fl_sapellido', '')}"
+            dni = datos.get('fl_dni', 'N/A')
+            edad = datos.get('edad_fan', 'N/A')
+            pais = datos.get('pais_fan_nombre', 'N/A')
         
         self.part_tree.insert(
             "",
@@ -328,14 +1027,15 @@ class FrontendLegoTours:
             values=(
                 participante["numero"],
                 participante["tipo"],
-                participante["nombre"],
-                participante["dni"],
-                participante["fnacimiento"],
-                participante["pais_nacionalidad"]
+                participante["id"],
+                nombre,
+                dni,
+                edad,
+                pais
             )
         )
         
-        log_event("PART", f"Participante agregado: {nombre}")
+        log_event("PART", f"Participante agregado: {nombre} (ID: {participante['id']}, Tipo: {participante['tipo']})")
         self.limpiar_participante()
         
         # Actualizar label
@@ -345,18 +1045,17 @@ class FrontendLegoTours:
         )
     
     def limpiar_participante(self):
-        """Limpiar formulario"""
-        self.combo_tipo.set("")
-        self.entry_nombre.delete(0, tk.END)
-        self.entry_dni.delete(0, tk.END)
-        self.entry_fnac.delete(0, tk.END)
-        self.entry_pais_nac.delete(0, tk.END)
-        self.entry_pasaporte.delete(0, tk.END)
+        """Limpia el formulario de consulta de participante"""
+        self.entry_id_participante.delete(0, tk.END)
+        self.text_datos.delete(1.0, tk.END)
+        self.participante_consultado = None
+        self.representante_consultado = None
+
     
     def crear_pestaña_resumen(self):
         """Pestaña 3: Resumen e Inscripción"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="3️⃣ Resumen")
+        self.notebook.add(frame, text="4️⃣ Resumen")
         
         # Título
         ttk.Label(frame, text="📋 Resumen de Inscripción", font=("Arial", 16, "bold")).pack(pady=15)
@@ -439,59 +1138,83 @@ class FrontendLegoTours:
             self.label_costo_total.config(text="COSTO TOTAL: $0.00")
     
     def crear_inscripcion(self):
-        """Crear inscripción en BD"""
+        """Crear inscripción en BD usando sp_crear_inscripcion"""
         if not self.tour_seleccionado or len(self.participantes_agregados) == 0:
-            messagebox.showwarning("Error", "Selecciona tour y agrega participantes")
+             messagebox.showwarning("Error", "Selecciona tour y agrega participantes")
+        return
+
+        if not self.cliente_responsable_id:
+            messagebox.showwarning("Error", "Debes consultar y seleccionar un cliente responsable")
             return
         
-        try:
-            # Calcular costo total
-            costo_total = self.tour_seleccionado['costo_unitario'] * len(self.participantes_agregados)
-            
-            payload = {
-                "tour_fecha": self.tour_seleccionado['fecha'],
-                "cantidad_participantes": len(self.participantes_agregados),
-                "costo_total": costo_total,
-                "participantes": self.participantes_agregados
-            }
-            
-            log_event("API", f"Creando inscripción para {len(self.participantes_agregados)} participantes...")
-            
-            response = requests.post(
-                f"{API_BASE_URL}/api/v1/inscripciones/crear",
-                json=payload,
-                timeout=API_TIMEOUT
-            )
-            
-            if response.status_code == 201:
-                resultado = response.json()
-                self.inscripcion_actual = resultado
-                log_event("SUCCESS", f"Inscripción creada: {resultado.get('ins_num')}")
-                messagebox.showinfo("Éxito", f"✓ Inscripción creada: #{resultado.get('ins_num')}")
-                self.notebook.select(3)  # Ir a pestaña de pago
-            else:
-                error_msg = response.json().get('error', f"Error {response.status_code}")
-                log_event("ERROR", error_msg)
-                messagebox.showerror("Error", f"Error creando inscripción: {error_msg}")
+        # Construir participantes_json según el formato: "ADULTO:cli_id;MENOR:fl_id;..."
+        participantes_parts = []
+        for p in self.participantes_agregados:
+            tipo = p["tipo"]
+            p_id = p["id"]
+            participantes_parts.append(f"{tipo}:{p_id}")
         
-        except Exception as e:
-            log_event("ERROR", str(e))
-            messagebox.showerror("Error", f"Error: {e}")
+        participantes_json = ";".join(participantes_parts)
+
+    try:
+        payload = {
+            "tour_fecha": self.tour_seleccionado['fecha'],
+                "cliente_responsable": self.cliente_responsable_id,
+            "participantes_json": participantes_json
+        }
+
+        log_event("API", f"Creando inscripción vía sp_crear_inscripcion...")
+            log_event("API", f"Participantes: {participantes_json}")
+        response = requests.post(
+            f"{API_BASE_URL}/api/v1/inscripciones/crear",
+            json=payload,
+            timeout=API_TIMEOUT
+        )
+
+        if response.status_code == 201:
+            resultado = response.json()
+            self.inscripcion_actual = resultado
+                log_event("SUCCESS", f"Inscripción creada: {resultado.get('ins_num')} - Estado: PENDIENTE")
+                messagebox.showinfo("Éxito", 
+                    f"✓ Inscripción creada exitosamente\n\n"
+                    f"Número: {resultado.get('ins_num')}\n"
+                    f"Total: ${resultado.get('ins_total', 0):,.2f}\n"
+                    f"Estado: PENDIENTE POR PAGAR\n\n"
+                    f"Procede al pago para confirmar.")
+                self.notebook.select(4)  # Ir a pestaña de pago
+        else:
+            error_msg = response.json().get('error', f"Error {response.status_code}")
+            log_event("ERROR", error_msg)
+            messagebox.showerror("Error", f"Error creando inscripción: {error_msg}")
+    except Exception as e:
+        log_event("ERROR", str(e))
+        messagebox.showerror("Error", f"Error: {e}")
+
     
     def crear_pestaña_pago(self):
         """Pestaña 4: Pago"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="4️⃣ Pago")
+        self.notebook.add(frame, text="5️⃣ Pago")
         
         # Título
         ttk.Label(frame, text="💳 Procesar Pago", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Actualizar info de inscripción cuando se muestra esta pestaña
+        def on_tab_changed(event):
+            if self.notebook.index(self.notebook.select()) == 4:  # Pestaña de pago
+                self.actualizar_info_pago()
+        
+        self.notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
         
         # Info inscripción
         info_frame = ttk.LabelFrame(frame, text="Inscripción")
         info_frame.pack(fill=tk.X, padx=10, pady=10)
         
         self.label_insc_num = ttk.Label(info_frame, text="Inscripción: No creada")
-        self.label_insc_num.pack(pady=10)
+        self.label_insc_num.pack(pady=5)
+        
+        self.label_insc_estado = ttk.Label(info_frame, text="Estado: -", foreground="orange")
+        self.label_insc_estado.pack(pady=5)
         
         self.label_insc_monto = ttk.Label(info_frame, text="Monto a pagar: $0.00", 
                                          font=("Arial", 12, "bold"), foreground="blue")
@@ -532,7 +1255,7 @@ class FrontendLegoTours:
                   command=self.cancelar_pago).pack(side=tk.LEFT, padx=5)
     
     def procesar_pago(self):
-        """Procesar pago"""
+        """Procesar pago usando sp_confirmar_pago_inscripcion"""
         if not self.inscripcion_actual:
             messagebox.showwarning("Error", "No hay inscripción para procesar pago")
             return
@@ -542,27 +1265,51 @@ class FrontendLegoTours:
             messagebox.showwarning("Error", "Selecciona un método de pago")
             return
         
+        titular = self.entry_titular.get().strip()
+        numero = self.entry_numero.get().strip()
+        
+        if not titular or not numero:
+            messagebox.showwarning("Error", "Completa los datos de pago")
+            return
+        
         try:
+            ins_num = self.inscripcion_actual.get('ins_num')
+            monto_total = self.inscripcion_actual.get('ins_total', 0)
+            
+            # Generar referencia de pago
+            referencia_pago = f"{metodo}-{ins_num}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+            
             payload = {
-                "inscripcion_num": self.inscripcion_actual.get('ins_num'),
-                "metodo_pago": metodo,
-                "monto": self.inscripcion_actual.get('ins_total', 0)
+                "inscripcion_num": ins_num,
+                "moneda_pago": "USD",
+                "monto_pagado": monto_total,
+                "referencia_pago": referencia_pago
             }
             
-            log_event("API", "Procesando pago...")
+            log_event("API", f"Confirmando pago de inscripción {ins_num}...")
             
             response = requests.post(
-                f"{API_BASE_URL}/api/v1/pagos/procesar",
+                f"{API_BASE_URL}/api/v1/pagos/confirmar",
                 json=payload,
                 timeout=API_TIMEOUT
             )
             
             if response.status_code == 200:
-                self.estado_pago = "PAGO"
                 resultado = response.json()
-                log_event("SUCCESS", "Pago procesado correctamente")
-                messagebox.showinfo("Éxito", "✓ Pago procesado correctamente")
-                self.notebook.select(4)  # Ir a confirmación
+                self.estado_pago = "PAGO"
+                self.inscripcion_actual.update(resultado)
+                
+                log_event("SUCCESS", f"Pago confirmado - Recibo: {resultado.get('recibo')}")
+                log_event("SUCCESS", f"Entradas generadas: {resultado.get('entradas_generadas')}")
+                
+                messagebox.showinfo("Éxito", 
+                    f"✓ Pago confirmado exitosamente\n\n"
+                    f"Recibo: {resultado.get('recibo')}\n"
+                    f"Entradas generadas: {resultado.get('entradas_generadas')}\n"
+                    f"Estado: PAGO\n\n"
+                    f"Las entradas han sido generadas automáticamente.")
+                self.notebook.select(5)  # Ir a confirmación
+                self.actualizar_confirmacion()
             else:
                 error_msg = response.json().get('error', f"Error {response.status_code}")
                 log_event("ERROR", error_msg)
@@ -571,6 +1318,24 @@ class FrontendLegoTours:
         except Exception as e:
             log_event("ERROR", str(e))
             messagebox.showerror("Error", f"Error: {e}")
+    
+    def actualizar_info_pago(self):
+        """Actualizar información de inscripción en pestaña de pago"""
+        if self.inscripcion_actual:
+            ins_num = self.inscripcion_actual.get('ins_num')
+            monto = self.inscripcion_actual.get('ins_total', 0)
+            estado = self.inscripcion_actual.get('estado', 'PENDIENTE')
+            
+            self.label_insc_num.config(text=f"Inscripción: #{ins_num}")
+            self.label_insc_estado.config(
+                text=f"Estado: {estado}",
+                foreground="orange" if estado == "PENDIENTE" else "green"
+            )
+            self.label_insc_monto.config(text=f"Monto a pagar: ${monto:,.2f} USD")
+        else:
+            self.label_insc_num.config(text="Inscripción: No creada")
+            self.label_insc_estado.config(text="Estado: -")
+            self.label_insc_monto.config(text="Monto a pagar: $0.00")
     
     def cancelar_pago(self):
         """Cancelar pago"""
@@ -586,10 +1351,17 @@ class FrontendLegoTours:
     def crear_pestaña_confirmacion(self):
         """Pestaña 5: Confirmación Final"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="5️⃣ Confirmación")
+        self.notebook.add(frame, text="6️⃣ Confirmación")
         
         # Título
         ttk.Label(frame, text="✅ Confirmación de Inscripción", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Actualizar confirmación cuando se muestra esta pestaña
+        def on_tab_changed(event):
+            if self.notebook.index(self.notebook.select()) == 5:  # Pestaña de confirmación
+                self.actualizar_confirmacion()
+        
+        self.notebook.bind("<<NotebookTabChanged>>", on_tab_changed)
         
         # Canvas con scroll
         canvas = tk.Canvas(frame, highlightthickness=0)
@@ -620,6 +1392,13 @@ class FrontendLegoTours:
         ttk.Button(button_frame, text="🔄 NUEVA INSCRIPCIÓN", 
                   command=self.nueva_inscripcion).pack(side=tk.LEFT, padx=5)
     
+    def actualizar_confirmacion(self):
+        """Actualizar información de confirmación"""
+        if self.inscripcion_actual:
+            comprobante = self.generar_comprobante()
+            self.label_conf.delete(1.0, tk.END)
+            self.label_conf.insert(tk.END, comprobante)
+    
     def descargar_comprobante(self):
         """Descargar comprobante"""
         if not self.inscripcion_actual:
@@ -639,6 +1418,12 @@ class FrontendLegoTours:
         if not self.inscripcion_actual:
             return "No hay datos de inscripción"
         
+        ins_num = self.inscripcion_actual.get('ins_num', 'N/A')
+        ins_total = self.inscripcion_actual.get('ins_total', 0)
+        estado = self.inscripcion_actual.get('estado', self.estado_pago)
+        recibo = self.inscripcion_actual.get('recibo', 'N/A')
+        entradas = self.inscripcion_actual.get('entradas_generadas', 0)
+        
         comprobante = f"""
 ╔════════════════════════════════════════════════════════════════╗
 ║          COMPROBANTE DE INSCRIPCIÓN - LEGO STORE TOURS        ║
@@ -647,10 +1432,18 @@ class FrontendLegoTours:
 DATOS DE INSCRIPCIÓN:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-Número de Inscripción: {self.inscripcion_actual.get('ins_num', 'N/A')}
-Fecha de Emisión: {self.inscripcion_actual.get('ins_femision', datetime.now().strftime('%Y-%m-%d'))}
-Estado: {self.estado_pago}
-
+Número de Inscripción: {ins_num}
+Fecha de Emisión: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+Estado: {estado}
+"""
+        
+        if estado == "PAGO":
+            comprobante += f"""
+Recibo: {recibo}
+Entradas Generadas: {entradas}
+"""
+        
+        comprobante += f"""
 TOUR CONTRATADO:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
@@ -663,30 +1456,52 @@ PARTICIPANTES:
 """
         
         for i, p in enumerate(self.participantes_agregados, 1):
+            datos = p.get('datos', {})
+            if p['tipo'] == "ADULTO":
+                nombre = f"{datos.get('cli_pnombre', '')} {datos.get('cli_papellido', '')} {datos.get('cli_sapellido', '')}"
+                dni = datos.get('cli_dni', 'N/A')
+                edad = datos.get('edad_calculada', 'N/A')
+                pais = datos.get('pais_nombre', 'N/A')
+            else:  # MENOR
+                nombre = f"{datos.get('fl_pnombre', '')} {datos.get('fl_papellido', '')} {datos.get('fl_sapellido', '')}"
+                dni = datos.get('fl_dni', 'N/A')
+                edad = datos.get('edad_fan', 'N/A')
+                pais = datos.get('pais_fan_nombre', 'N/A')
+            
             comprobante += f"""
-{i}. {p['nombre']}
+{i}. {nombre}
    Tipo: {p['tipo']}
-   DNI: {p['dni']}
-   Fecha Nacimiento: {p['fnacimiento']}
-   País: {p['pais_nacionalidad']}
+   ID: {p['id']}
+   DNI: {dni}
+   Edad: {edad} años
+   País: {pais}
 """
-        
-        costo_total = self.tour_seleccionado['costo_unitario'] * len(self.participantes_agregados) if self.tour_seleccionado else 0
         
         comprobante += f"""
 CÁLCULO DE COSTO:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${self.tour_seleccionado['costo_unitario']:.2f} × {len(self.participantes_agregados)} participantes = ${costo_total:,.2f}
+${self.tour_seleccionado['costo_unitario']:.2f} × {len(self.participantes_agregados)} participantes = ${ins_total:,.2f}
 
-TOTAL A PAGAR: ${costo_total:,.2f} USD
+TOTAL PAGADO: ${ins_total:,.2f} USD
 
 ════════════════════════════════════════════════════════════════
+"""
 
-✓ Inscripción confirmada - Pago procesado
+        if estado == "PAGO":
+            comprobante += f"""
+✓ INSCRIPCIÓN CONFIRMADA Y PAGADA
+✓ ENTRADAS GENERADAS: {entradas}
 📅 Fecha de viaje: {self.tour_seleccionado['fecha'] if self.tour_seleccionado else 'N/A'}
 
 Gracias por tu confianza. ¡Que disfrutes el tour!
+"""
+        else:
+            comprobante += f"""
+⚠️ INSCRIPCIÓN PENDIENTE DE PAGO
+📅 Fecha de viaje: {self.tour_seleccionado['fecha'] if self.tour_seleccionado else 'N/A'}
+
+Por favor, procede al pago para confirmar tu inscripción.
 """
         
         return comprobante
