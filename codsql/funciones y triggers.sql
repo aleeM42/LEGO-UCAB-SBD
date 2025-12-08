@@ -69,7 +69,7 @@ create or replace function fn_obtener_moneda_tour(p_tour_fecha in date)
 return varchar2 is
     v_moneda varchar2(3);
 begin
-    v_moneda := 'DKK';
+    v_moneda := 'USD';
     return v_moneda;
 end;
 /
@@ -697,92 +697,6 @@ begin
 end;
 /
 
---trigger para verificar que la cantidad del producto se puede vender 
-
-/*create or replace trigger verificar_stock
-before insert on det_fact_t
-for each ROW
-declare 
-    v_stock_dispo number;
-begin
-    select lot_stock into v_stock_dispo from lotes 
-    where lot_prod = :new.det_ft_prod
-    AND lot_idtem = :new.det_ft_idtem
-    AND lot_tienda = :new.det_ft_tienda
-    AND lot_id = :new.det_ft_lote;
-
-    if v_stock_dispo < :new.det_fact.cantidad then
-        raise_application_error(-20006, 'Stock insuficiente');
-    end if;
-end;
-/*/
-
-
---trigger para verificar el limite del producto en el catalago
-create or replace trigger verificar_lim_prod
-before insert on det_fact_o
-for EACH ROW
-declare 
-    v_limite number;
-BEGIN
-    
-    select cat_limcom into v_limite from catalogos 
-    where cat_prod = :new.det_fo_prod
-    AND cat_prod_idtem = :new.det_fo_idtem
-    AND cat_pais = :new.det_fo_pais;
-
-    if :new.det_fo_cantidad > v_limite then
-        raise_application_error(-20007, 'Se ha superado el limite de compra para este producto en el catalogo');
-    end if;
-end;
-/
-
-
---trigger para el descuento de inventario 
-create or replace trigger trg_descuento_inventario
-after insert on det_fact_t
-for each row 
-begin 
-    update lotes 
-    set lot_stock = lot_stock - :new.det_ft_cantidad 
-    where lot_prod = :new.det_ft_prod
-    AND lot_idtem = :new.det_ft_idtem
-    AND lot_tienda = :new.det_ft_tienda
-    AND lot_id = :new.det_ft_lote;
-end;
-/
-
---trigger para descuentos manuales 
-create or replace trigger descuentos_manuales 
-after insert on descuentos 
-for EACH ROW
-BEGIN
-    update lotes set lot_stock = lot_stock - :new.d_cantidad 
-    where lot_id = :new.d_lote
-    AND lot_idtem = :new.d_idtem
-    AND lot_prod = :new.d_prod
-    AND lot_tienda = :new.d_tienda;
-end;
-/
-
---trigger verificacion descuento manuales 
-create or replace trigger desc_manuales 
-before insert on descuentos 
-for each row 
-declare 
-    v_stock number;
-begin
-    select lot_stock into v_stock from lotes 
-    where lot_id = :new.d_lote
-    AND lot_idtem = :new.d_idtem
-    AND lot_prod = :new.d_prod
-    AND lot_tienda = :new.d_tienda;
-
-    if v_stock < :new.d_cantidad then 
-        raise_application_error(-20007, 'Stock insuficiente para realizar el descuento manual');
-    end if;
-end;
-/
 
 --triggers para la nac de los clientes 
 create or replace trigger nac_clientes
@@ -1257,7 +1171,7 @@ BEGIN
     END;
     
     p_mensaje := 'Inscripción creada. Número: ' || p_numero_inscripcion || 
-                 ' | Total: ' || p_costo_total || ' DKK | Estado: PENDIENTE PAGO';
+                 ' | Total: ' || p_costo_total || ' USD | Estado: PENDIENTE PAGO';
     
     COMMIT;
     
@@ -1316,8 +1230,8 @@ BEGIN
     -- Conversión aproximada: 1 DKK = 0.134 EUR = 0.145 USD
     CASE p_moneda_pago
         WHEN 'DKK' THEN v_factor_conversion := 1;
-        WHEN 'EUR' THEN v_factor_conversion := 7.46;  -- 1 EUR = 7.46 DKK
-        WHEN 'USD' THEN v_factor_conversion := 6.90;  -- 1 USD = 6.90 DKK
+        WHEN 'EUR' THEN v_factor_conversion := 7.47;  -- 1 EUR = 7.47 DKK
+        WHEN 'USD' THEN v_factor_conversion := 6.42;  -- 1 USD = 6.42 DKK
         ELSE RAISE_APPLICATION_ERROR(-20923, 'Moneda no válida');
     END CASE;
     
