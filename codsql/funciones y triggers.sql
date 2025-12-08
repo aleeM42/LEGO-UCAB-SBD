@@ -103,7 +103,7 @@ BEGIN
     END IF;
     
     -- Validar que la fecha del tour es en el futuro
-    v_tour_futuro := (p_tour_fecha > SYSDATE);
+    v_tour_futuro := (p_tour_fecha <= SYSDATE);
     
     RETURN v_tour_futuro;
     
@@ -992,66 +992,78 @@ END pr_validar_fase_1;
 
 --procedimiento para registrar cliente por primera vez 
 create or replace procedure sp_registrar_cliente_nuevo (
-    p_primer_nombre in varchar2,
-    p_segundo_nombre in varchar2,
-    p_primer_apellido in varchar2,
-    p_segundo_apellido in varchar2,
-    p_documento_id in number,
-    p_fecha_nacimiento in date,
-    p_pais_nacionalidad in number, 
-    p_numero_pasaporte in number default null,
-    p_fecha_vencimiento_pasaporte in date default null,
-    p_cliente_id out number,
-    p_mensaje out varchar2
+  p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
+    p_papellido     IN CLIENTES.cli_papellido%TYPE,
+    p_sapellido     IN CLIENTES.cli_sapellido%TYPE,
+    p_dni           IN CLIENTES.cli_dni%TYPE,
+    p_fnacimiento   IN CLIENTES.cli_fnacimiento%TYPE,
+    p_nac           IN CLIENTES.cli_nac%TYPE,
+    p_reside        IN CLIENTES.cli_reside%TYPE,
+    p_numpas        IN CLIENTES.cli_numpas%TYPE DEFAULT NULL,
+    p_fvenpas       IN CLIENTES.cli_fvenpas%TYPE DEFAULT NULL,
+    p_snombre       IN CLIENTES.cli_snombre%TYPE DEFAULT NULL
 )
-is 
-    v_edad number;
-    v_requiere_pas boolean;
-    v_ue varchar2(2);
-begin
-    --validaciones
-    v_edad := edad(p_fecha_nacimiento);
+AS
+    v_error_msg     VARCHAR2(255);
+    v_dni_count     NUMBER; 
+BEGIN
 
-    --validar edad
-    if v_edad < 21 then 
-        raise_application_error(-20901, 'Cliente debe ser mayor de 21 años par registrarse'); 
-    end if;
+    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL OR p_reside IS NULL THEN
+        
+        v_error_msg := 'Error: Faltan datos obligatorios.';
 
-    --validar que el documento no exista
-    if exists (select 1 from clientes where cli_dni = p_documento_id) then 
-        raise_application_error(-20902, 'Cliente con este documento ya esta registrado');
-    end if;
+        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
+        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
+        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
+        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
+        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
+        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad (cli_nac);'; END IF;
+        IF p_reside IS NULL THEN v_error_msg := v_error_msg || ' País de residencia (cli_reside);'; END IF;
 
-    --Validar pasaporte para no-UE
-    select p_ue into v_ue from paises where p_id = p_pais_nacionalidad;
+        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
+    END IF;
 
-    if v_ue = 'NO' then 
-        if p_numero_pasaporte is null or p_fecha_vencimiento_pasaporte is null then 
-            raise_application_error(-20903, 
-                'Ciudadanos no-UE deben proporcionar datos de pasaporte');
-        end if;
+    SELECT COUNT(*)
+    INTO v_dni_count
+    FROM CLIENTES
+    WHERE cli_dni = p_dni;
 
-        if p_fecha_vencimiento_pasaporte <= sysdate then
-            raise_application_error(-20904, 
-                'Pasaporte debe estar vigente'); 
-        end if;
-    end if;
-    -- generar nuevo cliente 
-
-    select clientes_seq.nextval into p_cliente_id from dual; 
-    insert into clientes (cli_id, cli_pnombre, cli_papellido, cli_sapellido, cli_dni,
-        cli_fnacimiento, cli_nac, cli_reside, cli_snombre, cli_numpas, cli_fvenpas
+    IF v_dni_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro cliente.');
+    END IF;
+    
+    INSERT INTO CLIENTES (
+        cli_pnombre,
+        cli_papellido,
+        cli_sapellido,
+        cli_dni,
+        cli_fnacimiento,
+        cli_nac,
+        cli_reside,
+        cli_numpas,
+        cli_fvenpas,
+        cli_snombre
     )
-    values (
-        p_cliente_id, p_primer_nombre, p_primer_apellido, p_segundo_apellido,
-        p_documento_id, p_fecha_nacimiento, p_pais_nacionalidad, p_pais_nacionalidad,
-        p_segundo_nombre, p_numero_pasaporte, p_fecha_vencimiento_pasaporte
+    VALUES (
+        p_pnombre,
+        p_papellido,
+        p_sapellido,
+        p_dni,
+        p_fnacimiento,
+        p_nac,
+        p_reside,
+        p_numpas,
+        p_fvenpas,
+        p_snombre
     );
 
-    p_mensaje := 'Cliente registrado exitosamente. ID: ' || p_cliente_id;
     COMMIT;
-    
-end;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20001, 'Error en la inserción o integridad de datos: ' || SQLERRM);
+END sp_registrar_cliente_nuevo;
 /
 
 --procedimiento para crear inscripcion (antes de pago)
