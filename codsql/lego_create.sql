@@ -319,3 +319,19 @@ create table det_fact_o (
     constraint fk_fact_det_fact_o foreign key (det_fo_fact) references factura_o(fact_o_num),
     constraint fk_factdet_cat foreign key (det_fo_prod, det_fo_idtem, det_fo_pais) references catalogos (cat_prod, cat_prod_idtem, cat_pais)
 );
+
+
+--secuencia para auditoria tours 
+create sequence auditoria_tours_seq start with 1 increment by 1;
+
+create table auditoria_tours (
+    aud_id number(4) primary key,
+    aud_fecha date not null, 
+    aud_inscripcion_num number not null,
+    aud_tipo_evento varchar2(30) not null,
+    aud_descripcion varchar2(200), 
+
+    constraint fk_aud_tour_insc foreign key (aud_inscripcion_num) references inscripciones (ins_num),
+    constraint ck_tipo_evento_aud_tour check(aud_tipo_evento in ('INSCRIPCION_CREADA', 'PAGO_CONFIRMADO', 'CAMBIO_ESTADO', 'ENTRADA_GENERADA'))  
+);
+
