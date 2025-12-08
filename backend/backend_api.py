@@ -22,11 +22,11 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-DB_USER = os.getenv('DB_USER', 'scott')
-DB_PASSWORD = os.getenv('DB_PASSWORD', 'tiger')
+DB_USER = os.getenv('DB_USER', 'maria_M')
+DB_PASSWORD = os.getenv('DB_PASSWORD', 'MariaMarin123')
 DB_HOST = os.getenv('DB_HOST', '127.0.0.1')
 DB_PORT = int(os.getenv('DB_PORT', 1521))
-DB_SID = os.getenv('DB_SID', 'xe')
+DB_SID = os.getenv('ORACLE_PDB', 'freepdb1')
 
 FLASK_HOST = os.getenv('FLASK_HOST', '127.0.0.1')
 FLASK_PORT = int(os.getenv('FLASK_PORT', 5000))
