@@ -1893,20 +1893,38 @@ AS
     v_subtotal NUMBER;
     v_pro_raned VARCHAR2(8);
 BEGIN
-    SELECT NVL(SUM(lot_stock), 0) INTO v_total_stock
-    FROM lotes
-    WHERE lot_tienda = p_ti_id AND lot_prod = p_pro_cod;
+    -- Verificar stock disponible considerando descuentos ya realizados
+    SELECT NVL(SUM(l.lot_stock - NVL(d.total_descontado, 0)), 0) INTO v_total_stock
+    FROM lotes l
+    LEFT JOIN (
+        SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
+        FROM descuentos
+        GROUP BY d_lote, d_prod, d_tienda
+    ) d ON l.lot_id = d.d_lote
+        AND l.lot_prod = d.d_prod
+        AND l.lot_tienda = d.d_tienda
+    WHERE l.lot_tienda = p_ti_id AND l.lot_prod = p_pro_cod
+      AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0;
     
     IF v_total_stock < p_cantidad THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente en lotes para la cantidad requerida.');
+        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente en lotes para la cantidad requerida. Stock disponible: ' || v_total_stock);
     END IF;
 
-    SELECT lot_id, lot_stock
+    -- Seleccionar el lote con mayor stock disponible
+    SELECT l.lot_id, (l.lot_stock - NVL(d.total_descontado, 0))
     INTO v_lote_id, v_stock_disp
-    FROM lotes
-    WHERE lot_tienda = p_ti_id
-      AND lot_prod = p_pro_cod
-    ORDER BY lot_stock DESC
+    FROM lotes l
+    LEFT JOIN (
+        SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
+        FROM descuentos
+        GROUP BY d_lote, d_prod, d_tienda
+    ) d ON l.lot_id = d.d_lote
+        AND l.lot_prod = d.d_prod
+        AND l.lot_tienda = d.d_tienda
+    WHERE l.lot_tienda = p_ti_id
+      AND l.lot_prod = p_pro_cod
+      AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0
+    ORDER BY (l.lot_stock - NVL(d.total_descontado, 0)) DESC
     FETCH FIRST 1 ROW ONLY;
 
     SELECT hp_precio

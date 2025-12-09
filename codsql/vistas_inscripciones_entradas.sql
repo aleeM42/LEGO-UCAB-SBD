@@ -151,4 +151,49 @@ GROUP BY
     t.ti_nom, t.ti_id, pr.pro_nom, l.lot_prod, l.lot_id, l.lot_stock
 ORDER BY
     t.ti_nom, pr.pro_nom, l.lot_id;
+-- vista catalogo con precios
+CREATE OR REPLACE VIEW vista_catalogo_precio AS
+SELECT
+    p.p_nom AS nombre_pais,
+    c.cat_prod AS codigo_producto,
+    pr.pro_nom AS nombre_producto,
+    hp.hp_precio AS precio_actual
+FROM
+    catalogos c
+JOIN
+    paises p ON c.cat_pais = p.p_id
+JOIN
+    productos pr ON c.cat_prod = pr.pro_cod
+JOIN
+    hist_precios hp ON c.cat_prod = hp.hp_prod
+WHERE
+    hp.hp_ffin IS NULL
+ORDER BY
+    p.p_nom, pr.pro_nom
+    
+-- vista inventario por tienda
+CREATE OR REPLACE VIEW vista_inventario_tienda AS
+SELECT
+    t.ti_nom AS nombre_tienda,
+    t.ti_id AS id_tienda,
+    pr.pro_nom AS nombre_producto,
+    l.lot_prod AS codigo_producto,
+    l.lot_id AS id_lote,
+    l.lot_stock AS stock_inicial_lote,
+    NVL(SUM(d.d_cantidad), 0) AS cantidad_descontada,
+    (l.lot_stock - NVL(SUM(d.d_cantidad), 0)) AS stock_actual
+FROM
+    lotes l
+JOIN
+    tiendas t ON l.lot_tienda = t.ti_id
+JOIN
+    productos pr ON l.lot_prod = pr.pro_cod
+LEFT JOIN
+    descuentos d ON l.lot_tienda = d.d_tienda
+                AND l.lot_prod = d.d_prod
+                AND l.lot_id = d.d_lote
+GROUP BY
+    t.ti_nom, t.ti_id, pr.pro_nom, l.lot_prod, l.lot_id, l.lot_stock
+ORDER BY
+    t.ti_nom, pr.pro_nom, l.lot_id;
 

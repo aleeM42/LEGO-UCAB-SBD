@@ -132,6 +132,12 @@ class FrontendLegoTours:
         
         # Pestaña 6: Confirmación
         self.crear_pestaña_confirmacion()
+        
+        # Pestaña 7: Ventas Tienda Física
+        self.crear_pestaña_ventas_fisicas()
+        
+        # Pestaña 8: Ventas Online
+        self.crear_pestaña_ventas_online()
     
     def crear_pestaña_tours(self):
         """Pestaña 1: Seleccionar Tour y Fecha"""
@@ -1609,6 +1615,707 @@ Por favor, procede al pago para confirmar tu inscripción.
             self.label_conf.delete(1.0, tk.END)
         
         messagebox.showinfo("Nueva Inscripción", "Proceso limpiado. Puedes iniciar una nueva inscripción.")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # VENTAS TIENDA FÍSICA
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    def crear_pestaña_ventas_fisicas(self):
+        """Crear pestaña para ventas de tienda física"""
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text="🏪 Tienda Física")
+        
+        # Título
+        ttk.Label(frame, text="🏪 Ventas Tienda Física", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Variables de estado
+        self.tienda_seleccionada = None
+        self.factura_fisica_actual = None
+        self.detalles_factura_fisica = []
+        self.catalogo_tienda = []
+        
+        # Frame principal con scroll
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Paso 1: Seleccionar Tienda
+        paso1_frame = ttk.LabelFrame(scrollable_frame, text="1️⃣ Seleccionar Tienda y Cliente")
+        paso1_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(paso1_frame, text="Tienda:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.combo_tienda_fisica = ttk.Combobox(paso1_frame, state="readonly", width=40)
+        self.combo_tienda_fisica.grid(row=0, column=1, padx=5, pady=5)
+        self.combo_tienda_fisica.bind("<<ComboboxSelected>>", self._on_tienda_seleccionada_fisica)
+        
+        ttk.Button(paso1_frame, text="Cargar Tiendas", command=self.cargar_tiendas).grid(row=0, column=2, padx=5, pady=5)
+        
+        ttk.Label(paso1_frame, text="ID Cliente:").grid(row=1, column=0, padx=5, pady=5, sticky="w")
+        self.entry_cliente_fisica = ttk.Entry(paso1_frame, width=20)
+        self.entry_cliente_fisica.grid(row=1, column=1, padx=5, pady=5, sticky="w")
+        ttk.Button(paso1_frame, text="Consultar Cliente", command=self.consultar_cliente_fisica).grid(row=1, column=2, padx=5, pady=5)
+        
+        self.label_info_cliente_fisica = ttk.Label(paso1_frame, text="", foreground="blue")
+        self.label_info_cliente_fisica.grid(row=2, column=0, columnspan=3, padx=5, pady=5, sticky="w")
+        
+        # Horarios de la tienda
+        self.label_horarios = ttk.Label(paso1_frame, text="", foreground="gray")
+        self.label_horarios.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky="w")
+        
+        # Paso 2: Catálogo y Productos
+        paso2_frame = ttk.LabelFrame(scrollable_frame, text="2️⃣ Catálogo de Productos")
+        paso2_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Treeview para productos
+        tree_frame = ttk.Frame(paso2_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        columns = ("Código", "Producto", "Precio", "Stock Total", "Lotes")
+        self.tree_productos_fisica = ttk.Treeview(tree_frame, columns=columns, show="headings", height=10)
+        
+        for col in columns:
+            self.tree_productos_fisica.heading(col, text=col)
+            self.tree_productos_fisica.column(col, width=120)
+        
+        scrollbar_tree = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree_productos_fisica.yview)
+        self.tree_productos_fisica.configure(yscrollcommand=scrollbar_tree.set)
+        
+        self.tree_productos_fisica.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar_tree.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Paso 3: Agregar Productos a Factura
+        paso3_frame = ttk.LabelFrame(scrollable_frame, text="3️⃣ Agregar Productos a Factura")
+        paso3_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(paso3_frame, text="Código Producto:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.entry_prod_cod_fisica = ttk.Entry(paso3_frame, width=15)
+        self.entry_prod_cod_fisica.grid(row=0, column=1, padx=5, pady=5)
+        
+        ttk.Label(paso3_frame, text="Cantidad:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        self.entry_cantidad_fisica = ttk.Entry(paso3_frame, width=10)
+        self.entry_cantidad_fisica.grid(row=0, column=3, padx=5, pady=5)
+        
+        ttk.Button(paso3_frame, text="Agregar a Factura", command=self.agregar_detalle_fisica).grid(row=0, column=4, padx=5, pady=5)
+        ttk.Button(paso3_frame, text="Iniciar Factura", command=self.iniciar_factura_fisica).grid(row=0, column=5, padx=5, pady=5)
+        
+        # Lista de detalles
+        detalles_frame = ttk.Frame(paso3_frame)
+        detalles_frame.grid(row=1, column=0, columnspan=6, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(detalles_frame, text="Detalles de Factura:").pack(anchor="w")
+        
+        self.listbox_detalles_fisica = tk.Listbox(detalles_frame, height=5)
+        self.listbox_detalles_fisica.pack(fill=tk.X, pady=5)
+        
+        # Paso 4: Finalizar Factura
+        paso4_frame = ttk.LabelFrame(scrollable_frame, text="4️⃣ Finalizar Factura")
+        paso4_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.label_total_fisica = ttk.Label(paso4_frame, text="Total: $0.00", font=("Arial", 12, "bold"))
+        self.label_total_fisica.pack(pady=10)
+        
+        ttk.Button(paso4_frame, text="Finalizar y Guardar Factura", command=self.finalizar_factura_fisica).pack(pady=5)
+        ttk.Button(paso4_frame, text="Nueva Venta", command=self.nueva_venta_fisica).pack(pady=5)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Cargar tiendas al inicio
+        self.cargar_tiendas()
+    
+    def cargar_tiendas(self):
+        """Cargar lista de tiendas desde API"""
+        def _cargar():
+            try:
+                log_event("API", "Cargando tiendas...")
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/tiendas",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    tiendas = response.json()
+                    self.tiendas_disponibles = {t["ti_id"]: t for t in tiendas}
+                    nombres = [f"{t['ti_id']} - {t['ti_nom']}" for t in tiendas]
+                    self.combo_tienda_fisica['values'] = nombres
+                    log_event("SUCCESS", f"Tiendas cargadas: {len(tiendas)}")
+                else:
+                    log_event("ERROR", f"Error cargando tiendas: {response.status_code}")
+            except Exception as e:
+                log_event("ERROR", str(e))
+        
+        thread = threading.Thread(target=_cargar, daemon=True)
+        thread.start()
+    
+    def _on_tienda_seleccionada_fisica(self, event=None):
+        """Cuando se selecciona una tienda"""
+        seleccion = self.combo_tienda_fisica.get()
+        if seleccion:
+            try:
+                tienda_id = int(seleccion.split(" - ")[0])
+                self.tienda_seleccionada = tienda_id
+                log_event("INFO", f"Tienda seleccionada: {tienda_id}")
+                # Cargar catálogo y horarios automáticamente
+                self.cargar_catalogo_tienda(tienda_id)
+                self.cargar_horarios_tienda(tienda_id)
+            except (ValueError, IndexError) as e:
+                log_event("ERROR", f"Error parseando tienda: {e}")
+                messagebox.showerror("Error", "Error al seleccionar tienda")
+    
+    def cargar_horarios_tienda(self, tienda_id):
+        """Cargar horarios de la tienda"""
+        def _cargar():
+            try:
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/tiendas/{tienda_id}/horarios",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    horarios = response.json()
+                    dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+                    texto = "Horarios: " + ", ".join([
+                        f"{dias_semana[h['dia_numero']-1]} {h['hora_apertura']}-{h['hora_cierre']}"
+                        for h in horarios
+                    ])
+                    self.label_horarios.config(text=texto)
+            except Exception as e:
+                log_event("ERROR", str(e))
+        
+        thread = threading.Thread(target=_cargar, daemon=True)
+        thread.start()
+    
+    def cargar_catalogo_tienda(self, tienda_id):
+        """Cargar catálogo de productos de la tienda"""
+        def _cargar():
+            try:
+                log_event("API", f"Cargando catálogo tienda {tienda_id}...")
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/tiendas/{tienda_id}/catalogo",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    self.catalogo_tienda = response.json()
+                    
+                    # Limpiar tree
+                    for item in self.tree_productos_fisica.get_children():
+                        self.tree_productos_fisica.delete(item)
+                    
+                    # Agregar productos
+                    for producto in self.catalogo_tienda:
+                        stock_total = sum(l["stock_disponible"] for l in producto["lotes"])
+                        lotes_info = f"{len(producto['lotes'])} lotes"
+                        self.tree_productos_fisica.insert("", tk.END, values=(
+                            producto["pro_cod"],
+                            producto["pro_nom"],
+                            f"${producto['precio']:.2f}",
+                            stock_total,
+                            lotes_info
+                        ))
+                    
+                    log_event("SUCCESS", f"Catálogo cargado: {len(self.catalogo_tienda)} productos")
+                else:
+                    log_event("ERROR", f"Error cargando catálogo: {response.status_code}")
+            except Exception as e:
+                log_event("ERROR", str(e))
+        
+        thread = threading.Thread(target=_cargar, daemon=True)
+        thread.start()
+    
+    def consultar_cliente_fisica(self):
+        """Consultar información del cliente"""
+        cli_id = self.entry_cliente_fisica.get().strip()
+        if not cli_id:
+            messagebox.showwarning("Advertencia", "Ingresa un ID de cliente")
+            return
+        
+        def _consultar():
+            try:
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/clientes/{cli_id}",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    cliente = response.json()
+                    nombre = cliente.get('nombre_completo', 'N/A')
+                    dni = cliente.get('dni', 'N/A')
+                    if nombre == 'N/A' or not nombre:
+                        # Intentar construir nombre desde campos individuales
+                        nombre = f"{cliente.get('cli_pnombre', '')} {cliente.get('cli_papellido', '')} {cliente.get('cli_sapellido', '')}".strip()
+                        if not nombre:
+                            nombre = 'N/A'
+                    if dni == 'N/A' or not dni:
+                        dni = cliente.get('cli_dni', 'N/A')
+                    texto = f"Cliente: {nombre} | DNI: {dni}"
+                    self.label_info_cliente_fisica.config(text=texto, foreground="blue")
+                else:
+                    error_msg = response.json().get("error", "Cliente no encontrado")
+                    self.label_info_cliente_fisica.config(text=f"Error: {error_msg}", foreground="red")
+            except Exception as e:
+                log_event("ERROR", str(e))
+                self.label_info_cliente_fisica.config(text="Error consultando cliente", foreground="red")
+        
+        thread = threading.Thread(target=_consultar, daemon=True)
+        thread.start()
+    
+    def iniciar_factura_fisica(self):
+        """Iniciar una nueva factura física"""
+        cli_id = self.entry_cliente_fisica.get().strip()
+        if not cli_id or not self.tienda_seleccionada:
+            messagebox.showwarning("Advertencia", "Selecciona tienda e ingresa ID de cliente")
+            return
+        
+        def _iniciar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-fisicas/iniciar",
+                    json={
+                        "cliente_id": int(cli_id),
+                        "tienda_id": self.tienda_seleccionada
+                    },
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 201:
+                    data = response.json()
+                    self.factura_fisica_actual = data["fact_num"]
+                    self.detalles_factura_fisica = []
+                    self.listbox_detalles_fisica.delete(0, tk.END)
+                    messagebox.showinfo("Éxito", f"Factura {self.factura_fisica_actual} iniciada")
+                    log_event("SUCCESS", f"Factura física iniciada: {self.factura_fisica_actual}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_iniciar, daemon=True)
+        thread.start()
+    
+    def agregar_detalle_fisica(self):
+        """Agregar un detalle a la factura física"""
+        if not self.factura_fisica_actual:
+            messagebox.showwarning("Advertencia", "Primero inicia una factura")
+            return
+        
+        pro_cod = self.entry_prod_cod_fisica.get().strip()
+        cantidad = self.entry_cantidad_fisica.get().strip()
+        
+        if not pro_cod or not cantidad:
+            messagebox.showwarning("Advertencia", "Ingresa código de producto y cantidad")
+            return
+        
+        def _agregar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-fisicas/{self.factura_fisica_actual}/detalles",
+                    json={
+                        "tienda_id": self.tienda_seleccionada,
+                        "producto_cod": int(pro_cod),
+                        "cantidad": int(cantidad)
+                    },
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    detalle_texto = f"Prod {pro_cod} x {cantidad} - {data.get('mensaje', '')}"
+                    self.listbox_detalles_fisica.insert(tk.END, detalle_texto)
+                    self.detalles_factura_fisica.append({
+                        "producto": int(pro_cod),
+                        "cantidad": int(cantidad)
+                    })
+                    self.entry_prod_cod_fisica.delete(0, tk.END)
+                    self.entry_cantidad_fisica.delete(0, tk.END)
+                    log_event("SUCCESS", f"Detalle agregado: {detalle_texto}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_agregar, daemon=True)
+        thread.start()
+    
+    def finalizar_factura_fisica(self):
+        """Finalizar la factura física"""
+        if not self.factura_fisica_actual:
+            messagebox.showwarning("Advertencia", "No hay factura iniciada")
+            return
+        
+        def _finalizar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-fisicas/{self.factura_fisica_actual}/finalizar",
+                    json={"tienda_id": self.tienda_seleccionada},
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    total = data.get("total", 0)
+                    self.label_total_fisica.config(text=f"Total: ${total:.2f}")
+                    messagebox.showinfo("Éxito", f"Factura {self.factura_fisica_actual} finalizada\nTotal: ${total:.2f}")
+                    log_event("SUCCESS", f"Factura física finalizada: {self.factura_fisica_actual}, Total: ${total:.2f}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_finalizar, daemon=True)
+        thread.start()
+    
+    def nueva_venta_fisica(self):
+        """Limpiar y empezar nueva venta"""
+        self.factura_fisica_actual = None
+        self.detalles_factura_fisica = []
+        self.listbox_detalles_fisica.delete(0, tk.END)
+        self.label_total_fisica.config(text="Total: $0.00")
+        self.entry_prod_cod_fisica.delete(0, tk.END)
+        self.entry_cantidad_fisica.delete(0, tk.END)
+        messagebox.showinfo("Nueva Venta", "Proceso limpiado. Puedes iniciar una nueva venta.")
+
+    # ═══════════════════════════════════════════════════════════════════════════════
+    # VENTAS ONLINE
+    # ═══════════════════════════════════════════════════════════════════════════════
+    
+    def crear_pestaña_ventas_online(self):
+        """Crear pestaña para ventas online"""
+        frame = ttk.Frame(self.notebook)
+        self.notebook.add(frame, text="🛒 Online")
+        
+        # Título
+        ttk.Label(frame, text="🛒 Ventas Online", font=("Arial", 16, "bold")).pack(pady=15)
+        
+        # Variables de estado
+        self.factura_online_actual = None
+        self.detalles_factura_online = []
+        self.catalogo_online = []
+        self.pais_cliente_online = None
+        
+        # Frame principal con scroll
+        canvas = tk.Canvas(frame, highlightthickness=0)
+        scrollbar = ttk.Scrollbar(frame, orient="vertical", command=canvas.yview)
+        scrollable_frame = ttk.Frame(canvas)
+        
+        scrollable_frame.bind(
+            "<Configure>",
+            lambda e: canvas.configure(scrollregion=canvas.bbox("all"))
+        )
+        
+        canvas.create_window((0, 0), window=scrollable_frame, anchor="nw")
+        canvas.configure(yscrollcommand=scrollbar.set)
+        
+        # Paso 1: Seleccionar Cliente
+        paso1_frame = ttk.LabelFrame(scrollable_frame, text="1️⃣ Seleccionar Cliente")
+        paso1_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(paso1_frame, text="ID Cliente:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.entry_cliente_online = ttk.Entry(paso1_frame, width=20)
+        self.entry_cliente_online.grid(row=0, column=1, padx=5, pady=5, sticky="w")
+        ttk.Button(paso1_frame, text="Consultar Cliente", command=self.consultar_cliente_online).grid(row=0, column=2, padx=5, pady=5)
+        
+        self.label_info_cliente_online = ttk.Label(paso1_frame, text="", foreground="blue")
+        self.label_info_cliente_online.grid(row=1, column=0, columnspan=3, padx=5, pady=5, sticky="w")
+        
+        # Paso 2: Catálogo por País
+        paso2_frame = ttk.LabelFrame(scrollable_frame, text="2️⃣ Catálogo de Productos (por País del Cliente)")
+        paso2_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
+        
+        # Treeview para productos
+        tree_frame = ttk.Frame(paso2_frame)
+        tree_frame.pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        
+        columns = ("Código", "Producto", "Precio", "Límite Compra")
+        self.tree_productos_online = ttk.Treeview(tree_frame, columns=columns, show="headings", height=10)
+        
+        for col in columns:
+            self.tree_productos_online.heading(col, text=col)
+            self.tree_productos_online.column(col, width=150)
+        
+        scrollbar_tree = ttk.Scrollbar(tree_frame, orient="vertical", command=self.tree_productos_online.yview)
+        self.tree_productos_online.configure(yscrollcommand=scrollbar_tree.set)
+        
+        self.tree_productos_online.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar_tree.pack(side=tk.RIGHT, fill=tk.Y)
+        
+        # Paso 3: Agregar Productos a Factura
+        paso3_frame = ttk.LabelFrame(scrollable_frame, text="3️⃣ Agregar Productos a Factura")
+        paso3_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        ttk.Label(paso3_frame, text="Código Producto:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
+        self.entry_prod_cod_online = ttk.Entry(paso3_frame, width=15)
+        self.entry_prod_cod_online.grid(row=0, column=1, padx=5, pady=5)
+        
+        ttk.Label(paso3_frame, text="Cantidad:").grid(row=0, column=2, padx=5, pady=5, sticky="w")
+        self.entry_cantidad_online = ttk.Entry(paso3_frame, width=10)
+        self.entry_cantidad_online.grid(row=0, column=3, padx=5, pady=5)
+        
+        ttk.Button(paso3_frame, text="Agregar a Factura", command=self.agregar_detalle_online).grid(row=0, column=4, padx=5, pady=5)
+        ttk.Button(paso3_frame, text="Iniciar Factura", command=self.iniciar_factura_online).grid(row=0, column=5, padx=5, pady=5)
+        
+        # Lista de detalles
+        detalles_frame = ttk.Frame(paso3_frame)
+        detalles_frame.grid(row=1, column=0, columnspan=6, padx=5, pady=5, sticky="ew")
+        
+        ttk.Label(detalles_frame, text="Detalles de Factura:").pack(anchor="w")
+        
+        self.listbox_detalles_online = tk.Listbox(detalles_frame, height=5)
+        self.listbox_detalles_online.pack(fill=tk.X, pady=5)
+        
+        # Paso 4: Finalizar Factura
+        paso4_frame = ttk.LabelFrame(scrollable_frame, text="4️⃣ Finalizar Factura y Ver Puntos")
+        paso4_frame.pack(fill=tk.X, padx=20, pady=10)
+        
+        self.label_total_online = ttk.Label(paso4_frame, text="Total: $0.00", font=("Arial", 12, "bold"))
+        self.label_total_online.pack(pady=5)
+        
+        self.label_puntos_online = ttk.Label(paso4_frame, text="Puntos generados: 0 | Puntos totales: 0", font=("Arial", 10))
+        self.label_puntos_online.pack(pady=5)
+        
+        ttk.Button(paso4_frame, text="Finalizar y Guardar Factura", command=self.finalizar_factura_online).pack(pady=5)
+        ttk.Button(paso4_frame, text="Nueva Venta", command=self.nueva_venta_online).pack(pady=5)
+        
+        canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+        scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    
+    def consultar_cliente_online(self):
+        """Consultar información del cliente y cargar catálogo"""
+        cli_id = self.entry_cliente_online.get().strip()
+        if not cli_id:
+            messagebox.showwarning("Advertencia", "Ingresa un ID de cliente")
+            return
+        
+        def _consultar():
+            try:
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/clientes/{cli_id}",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    cliente = response.json()
+                    self.pais_cliente_online = cliente.get("pais_residencia_id") or cliente.get("cli_reside")
+                    nombre = cliente.get('nombre_completo', 'N/A')
+                    pais = cliente.get('pais_residencia', 'N/A')
+                    
+                    # Intentar construir nombre desde campos individuales si no existe
+                    if nombre == 'N/A' or not nombre:
+                        nombre = f"{cliente.get('cli_pnombre', '')} {cliente.get('cli_papellido', '')} {cliente.get('cli_sapellido', '')}".strip()
+                        if not nombre:
+                            nombre = 'N/A'
+                    
+                    # Obtener nombre del país si solo tenemos el ID
+                    if pais == 'N/A' or not pais:
+                        pais = cliente.get('pais_nombre', 'N/A')
+                    
+                    texto = f"Cliente: {nombre} | País: {pais}"
+                    self.label_info_cliente_online.config(text=texto, foreground="blue")
+                    
+                    # Cargar catálogo del país
+                    if self.pais_cliente_online:
+                        log_event("INFO", f"Cargando catálogo para país {self.pais_cliente_online}")
+                        self.cargar_catalogo_online(self.pais_cliente_online)
+                    else:
+                        self.label_info_cliente_online.config(
+                            text=f"{texto} | Error: No se pudo determinar el país", 
+                            foreground="orange"
+                        )
+                else:
+                    error_msg = response.json().get("error", "Cliente no encontrado")
+                    self.label_info_cliente_online.config(text=f"Error: {error_msg}", foreground="red")
+            except Exception as e:
+                log_event("ERROR", str(e))
+                self.label_info_cliente_online.config(text="Error consultando cliente", foreground="red")
+        
+        thread = threading.Thread(target=_consultar, daemon=True)
+        thread.start()
+    
+    def cargar_catalogo_online(self, pais_id):
+        """Cargar catálogo de productos para el país"""
+        def _cargar():
+            try:
+                log_event("API", f"Cargando catálogo online país {pais_id}...")
+                response = requests.get(
+                    f"{API_BASE_URL}/api/v1/catalogo-online/{pais_id}",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    self.catalogo_online = response.json()
+                    
+                    # Limpiar tree
+                    for item in self.tree_productos_online.get_children():
+                        self.tree_productos_online.delete(item)
+                    
+                    # Agregar productos
+                    if self.catalogo_online:
+                        for producto in self.catalogo_online:
+                            self.tree_productos_online.insert("", tk.END, values=(
+                                producto["pro_cod"],
+                                producto["pro_nom"],
+                                f"${producto['precio']:.2f}",
+                                producto["limite_compra"]
+                            ))
+                        log_event("SUCCESS", f"Catálogo online cargado: {len(self.catalogo_online)} productos")
+                    else:
+                        log_event("WARNING", "Catálogo vacío para este país")
+                        messagebox.showinfo("Info", "No hay productos disponibles en el catálogo para este país")
+                else:
+                    error_msg = response.json().get("error", f"Error {response.status_code}")
+                    log_event("ERROR", f"Error cargando catálogo: {error_msg}")
+                    messagebox.showerror("Error", f"Error cargando catálogo: {error_msg}")
+            except Exception as e:
+                log_event("ERROR", str(e))
+        
+        thread = threading.Thread(target=_cargar, daemon=True)
+        thread.start()
+    
+    def iniciar_factura_online(self):
+        """Iniciar una nueva factura online"""
+        cli_id = self.entry_cliente_online.get().strip()
+        if not cli_id:
+            messagebox.showwarning("Advertencia", "Ingresa ID de cliente")
+            return
+        
+        def _iniciar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-online/iniciar",
+                    json={"cliente_id": int(cli_id)},
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 201:
+                    data = response.json()
+                    self.factura_online_actual = data["fact_num"]
+                    self.detalles_factura_online = []
+                    self.listbox_detalles_online.delete(0, tk.END)
+                    messagebox.showinfo("Éxito", f"Factura {self.factura_online_actual} iniciada")
+                    log_event("SUCCESS", f"Factura online iniciada: {self.factura_online_actual}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_iniciar, daemon=True)
+        thread.start()
+    
+    def agregar_detalle_online(self):
+        """Agregar un detalle a la factura online"""
+        if not self.factura_online_actual:
+            messagebox.showwarning("Advertencia", "Primero inicia una factura")
+            return
+        
+        pro_cod = self.entry_prod_cod_online.get().strip()
+        cantidad = self.entry_cantidad_online.get().strip()
+        
+        if not pro_cod or not cantidad:
+            messagebox.showwarning("Advertencia", "Ingresa código de producto y cantidad")
+            return
+        
+        def _agregar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-online/{self.factura_online_actual}/detalles",
+                    json={
+                        "producto_cod": int(pro_cod),
+                        "cantidad": int(cantidad)
+                    },
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    detalle_texto = f"Prod {pro_cod} x {cantidad} - {data.get('mensaje', '')}"
+                    self.listbox_detalles_online.insert(tk.END, detalle_texto)
+                    self.detalles_factura_online.append({
+                        "producto": int(pro_cod),
+                        "cantidad": int(cantidad)
+                    })
+                    self.entry_prod_cod_online.delete(0, tk.END)
+                    self.entry_cantidad_online.delete(0, tk.END)
+                    log_event("SUCCESS", f"Detalle agregado: {detalle_texto}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_agregar, daemon=True)
+        thread.start()
+    
+    def finalizar_factura_online(self):
+        """Finalizar la factura online y mostrar puntos"""
+        if not self.factura_online_actual:
+            messagebox.showwarning("Advertencia", "No hay factura iniciada")
+            return
+        
+        def _finalizar():
+            try:
+                response = requests.post(
+                    f"{API_BASE_URL}/api/v1/facturas-online/{self.factura_online_actual}/finalizar",
+                    timeout=API_TIMEOUT
+                )
+                
+                if response.status_code == 200:
+                    data = response.json()
+                    total = data.get("total", 0)
+                    puntos_gen = data.get("puntos_generados", 0)
+                    puntos_tot = data.get("puntos_totales_cliente", 0)
+                    venta_gratis = data.get("venta_gratis", False)
+                    
+                    self.label_total_online.config(text=f"Total: ${total:.2f}")
+                    self.label_puntos_online.config(
+                        text=f"Puntos generados: {puntos_gen} | Puntos totales cliente: {puntos_tot}"
+                    )
+                    
+                    msg = f"Factura {self.factura_online_actual} finalizada\n"
+                    msg += f"Total: ${total:.2f}\n"
+                    if venta_gratis:
+                        msg += "¡Venta GRATIS aplicada! (Solo envío y recargo)\n"
+                    msg += f"Puntos generados: {puntos_gen}\n"
+                    msg += f"Puntos totales acumulados: {puntos_tot}"
+                    
+                    messagebox.showinfo("Éxito", msg)
+                    log_event("SUCCESS", f"Factura online finalizada: {self.factura_online_actual}, Total: ${total:.2f}, Puntos: {puntos_gen}")
+                else:
+                    error = response.json().get("error", "Error desconocido")
+                    messagebox.showerror("Error", error)
+            except Exception as e:
+                log_event("ERROR", str(e))
+                messagebox.showerror("Error", str(e))
+        
+        thread = threading.Thread(target=_finalizar, daemon=True)
+        thread.start()
+    
+    def nueva_venta_online(self):
+        """Limpiar y empezar nueva venta online"""
+        self.factura_online_actual = None
+        self.detalles_factura_online = []
+        self.listbox_detalles_online.delete(0, tk.END)
+        self.label_total_online.config(text="Total: $0.00")
+        self.label_puntos_online.config(text="Puntos generados: 0 | Puntos totales: 0")
+        self.entry_prod_cod_online.delete(0, tk.END)
+        self.entry_cantidad_online.delete(0, tk.END)
+        messagebox.showinfo("Nueva Venta", "Proceso limpiado. Puedes iniciar una nueva venta online.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # INICIAR APLICACIÓN

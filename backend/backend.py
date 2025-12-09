@@ -292,6 +292,12 @@ def obtener_cliente(cli_id):
         if not cliente_data:
             return jsonify({"error": f"Cliente {cli_id} no encontrado"}), 404
         
+        # Agregar campos calculados para compatibilidad con frontend
+        cliente_data["nombre_completo"] = f"{cliente_data.get('cli_pnombre', '')} {cliente_data.get('cli_papellido', '')} {cliente_data.get('cli_sapellido', '')}".strip()
+        cliente_data["dni"] = cliente_data.get("cli_dni")
+        cliente_data["pais_residencia"] = cliente_data.get("pais_nombre", "")
+        cliente_data["pais_residencia_id"] = cliente_data.get("cli_reside")
+        
         return jsonify(cliente_data), 200
         
     except oracledb.DatabaseError as e:
@@ -976,6 +982,667 @@ def confirmar_pago():
         log_event("ERROR", f"Error general en confirmar_pago: {e}")
         return jsonify({"error": str(e)}), 500
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VENTAS TIENDA FÍSICA
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/v1/tiendas", methods=["GET"])
+def get_tiendas():
+    """Obtiene todas las tiendas disponibles"""
+    try:
+        log_event("API", "GET /api/v1/tiendas")
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        sql = """
+            SELECT 
+                ti_id,
+                ti_nom,
+                ti_dic,
+                ti_tel,
+                ti_ciu,
+                ti_pais,
+                ti_estado
+            FROM tiendas
+            ORDER BY ti_nom
+        """
+        
+        cur.execute(sql)
+        tiendas = []
+        for row in cur.fetchall():
+            tiendas.append({
+                "ti_id": int(row[0]),
+                "ti_nom": row[1],
+                "ti_dic": row[2],
+                "ti_tel": row[3],
+                "ti_ciu": int(row[4]),
+                "ti_pais": int(row[5]),
+                "ti_estado": int(row[6])
+            })
+        
+        cur.close()
+        conn.close()
+        
+        log_event("SUCCESS", f"Tiendas obtenidas: {len(tiendas)}")
+        return jsonify(tiendas), 200
+        
+    except Exception as e:
+        log_event("ERROR", f"Error en /api/v1/tiendas: {e}")
+        return jsonify({"error": "Error obteniendo tiendas", "detalle": str(e)}), 500
+
+@app.route("/api/v1/tiendas/<int:tienda_id>/horarios", methods=["GET"])
+def get_horarios_tienda(tienda_id):
+    """Obtiene los horarios disponibles de una tienda"""
+    try:
+        log_event("API", f"GET /api/v1/tiendas/{tienda_id}/horarios")
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        sql = """
+            SELECT 
+                h_dia,
+                h_aper,
+                h_cier
+            FROM horarios
+            WHERE h_tid = :tienda_id
+            ORDER BY h_dia
+        """
+        
+        cur.execute(sql, {"tienda_id": tienda_id})
+        horarios = []
+        dias_semana = ["Lunes", "Martes", "Miércoles", "Jueves", "Viernes", "Sábado", "Domingo"]
+        
+        for row in cur.fetchall():
+            dia_num = int(row[0])
+            horarios.append({
+                "dia_numero": dia_num,
+                "dia_nombre": dias_semana[dia_num - 1] if 1 <= dia_num <= 7 else f"Día {dia_num}",
+                "hora_apertura": row[1],
+                "hora_cierre": row[2]
+            })
+        
+        cur.close()
+        conn.close()
+        
+        log_event("SUCCESS", f"Horarios obtenidos para tienda {tienda_id}: {len(horarios)}")
+        return jsonify(horarios), 200
+        
+    except Exception as e:
+        log_event("ERROR", f"Error en /api/v1/tiendas/{tienda_id}/horarios: {e}")
+        return jsonify({"error": "Error obteniendo horarios", "detalle": str(e)}), 500
+
+@app.route("/api/v1/tiendas/<int:tienda_id>/catalogo", methods=["GET"])
+def get_catalogo_tienda(tienda_id):
+    """Obtiene el catálogo de productos disponibles en una tienda con lotes e inventario"""
+    try:
+        log_event("API", f"GET /api/v1/tiendas/{tienda_id}/catalogo")
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        sql = """
+            SELECT 
+                p.pro_cod,
+                p.pro_nom,
+                p.pro_desc,
+                p.pro_raned,
+                p.pro_ranpr,
+                hp.hp_precio,
+                l.lot_id,
+                l.lot_stock,
+                NVL(SUM(d.d_cantidad), 0) AS cantidad_descontada,
+                (l.lot_stock - NVL(SUM(d.d_cantidad), 0)) AS stock_disponible
+            FROM productos p
+            JOIN lotes l ON p.pro_cod = l.lot_prod
+            JOIN hist_precios hp ON p.pro_cod = hp.hp_prod AND hp.hp_ffin IS NULL
+            LEFT JOIN descuentos d ON l.lot_tienda = d.d_tienda
+                AND l.lot_prod = d.d_prod
+                AND l.lot_id = d.d_lote
+            WHERE l.lot_tienda = :tienda_id
+            GROUP BY p.pro_cod, p.pro_nom, p.pro_desc, p.pro_raned, p.pro_ranpr, 
+                     hp.hp_precio, l.lot_id, l.lot_stock
+            HAVING (l.lot_stock - NVL(SUM(d.d_cantidad), 0)) > 0
+            ORDER BY p.pro_nom
+        """
+        
+        cur.execute(sql, {"tienda_id": tienda_id})
+        productos = {}
+        
+        for row in cur.fetchall():
+            pro_cod = int(row[0])
+            if pro_cod not in productos:
+                productos[pro_cod] = {
+                    "pro_cod": pro_cod,
+                    "pro_nom": row[1],
+                    "pro_desc": row[2],
+                    "pro_raned": row[3],
+                    "pro_ranpr": int(row[4]) if row[4] else None,
+                    "precio": float(row[5]) if row[5] else 0.0,
+                    "lotes": []
+                }
+            
+            productos[pro_cod]["lotes"].append({
+                "lot_id": int(row[6]),
+                "stock_inicial": int(row[7]),
+                "cantidad_descontada": int(row[8]),
+                "stock_disponible": int(row[9])
+            })
+        
+        # Convertir a lista
+        catalogo = list(productos.values())
+        
+        cur.close()
+        conn.close()
+        
+        log_event("SUCCESS", f"Catálogo obtenido para tienda {tienda_id}: {len(catalogo)} productos")
+        return jsonify(catalogo), 200
+        
+    except Exception as e:
+        log_event("ERROR", f"Error en /api/v1/tiendas/{tienda_id}/catalogo: {e}")
+        return jsonify({"error": "Error obteniendo catálogo", "detalle": str(e)}), 500
+
+@app.route("/api/v1/facturas-fisicas/iniciar", methods=["POST"])
+def iniciar_factura_fisica():
+    """Inicia una factura física usando INICIAR_FACTURA_FISICA"""
+    try:
+        data = request.get_json(force=True)
+        cli_id = data.get("cliente_id")
+        tienda_id = data.get("tienda_id")
+        
+        if not cli_id or not tienda_id:
+            return jsonify({"error": "Faltan datos requeridos: cliente_id y tienda_id"}), 400
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_fact_num = cur.var(oracledb.NUMBER)
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            INICIAR_FACTURA_FISICA(
+                p_cli_id => :p_cli_id,
+                p_ti_id => :p_ti_id,
+                p_fact_tf_num => :o_fact_num,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_cli_id": int(cli_id),
+            "p_ti_id": int(tienda_id),
+            "o_fact_num": o_fact_num,
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        fact_num_raw = o_fact_num.getvalue()
+        msg_raw = o_msg.getvalue()
+        
+        fact_num = fact_num_raw[0] if isinstance(fact_num_raw, (list, tuple)) else fact_num_raw
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if fact_num is None:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Factura física iniciada: {fact_num}")
+        return jsonify({
+            "fact_num": int(fact_num),
+            "mensaje": msg
+        }), 201
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en iniciar_factura_fisica: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en iniciar_factura_fisica: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/facturas-fisicas/<int:fact_num>/detalles", methods=["POST"])
+def agregar_detalle_fisica(fact_num):
+    """Agrega un detalle a la factura física usando INSERTAR_DETALLE_FISICA"""
+    try:
+        data = request.get_json(force=True)
+        tienda_id = data.get("tienda_id")
+        producto_cod = data.get("producto_cod")
+        cantidad = data.get("cantidad")
+        
+        if not tienda_id or not producto_cod or not cantidad:
+            return jsonify({"error": "Faltan datos requeridos"}), 400
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            INSERTAR_DETALLE_FISICA(
+                p_ti_id => :p_ti_id,
+                p_fact_num => :p_fact_num,
+                p_pro_cod => :p_pro_cod,
+                p_cantidad => :p_cantidad,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_ti_id": int(tienda_id),
+            "p_fact_num": int(fact_num),
+            "p_pro_cod": int(producto_cod),
+            "p_cantidad": int(cantidad),
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        msg_raw = o_msg.getvalue()
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if "Error" in msg:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Detalle agregado a factura {fact_num}: {msg}")
+        return jsonify({"mensaje": msg}), 200
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en agregar_detalle_fisica: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en agregar_detalle_fisica: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/facturas-fisicas/<int:fact_num>/finalizar", methods=["POST"])
+def finalizar_factura_fisica(fact_num):
+    """Finaliza una factura física usando FINALIZAR_FACTURA_FISICA"""
+    try:
+        data = request.get_json(force=True)
+        tienda_id = data.get("tienda_id")
+        
+        if not tienda_id:
+            return jsonify({"error": "Falta tienda_id"}), 400
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            FINALIZAR_FACTURA_FISICA(
+                p_ti_id => :p_ti_id,
+                p_fact_num => :p_fact_num,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_ti_id": int(tienda_id),
+            "p_fact_num": int(fact_num),
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        # Obtener total de la factura
+        cur.execute("""
+            SELECT fact_tf_total FROM factura_tf
+            WHERE fact_tf_num = :fact_num AND fact_tf_tie = :tienda_id
+        """, {"fact_num": int(fact_num), "tienda_id": int(tienda_id)})
+        
+        row = cur.fetchone()
+        total = float(row[0]) if row and row[0] else 0.0
+        
+        msg_raw = o_msg.getvalue()
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if "Error" in msg:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Factura física {fact_num} finalizada: {msg}")
+        return jsonify({
+            "fact_num": int(fact_num),
+            "total": total,
+            "mensaje": msg
+        }), 200
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en finalizar_factura_fisica: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en finalizar_factura_fisica: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/inventario/descuentos", methods=["GET"])
+def get_descuentos_inventario():
+    """Obtiene los descuentos de inventario por día, tienda y facturas"""
+    try:
+        fecha = request.args.get("fecha")  # Formato: YYYY-MM-DD
+        tienda_id = request.args.get("tienda_id")
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        sql = """
+            SELECT 
+                d.d_fecha,
+                d.d_tienda,
+                t.ti_nom AS nombre_tienda,
+                d.d_lote,
+                d.d_prod,
+                p.pro_nom AS nombre_producto,
+                d.d_cantidad,
+                ft.fact_tf_num AS factura_num,
+                ft.fact_tf_femision AS fecha_factura
+            FROM descuentos d
+            JOIN tiendas t ON d.d_tienda = t.ti_id
+            JOIN productos p ON d.d_prod = p.pro_cod
+            LEFT JOIN det_fact_t df ON d.d_lote = df.det_ft_lote 
+                AND d.d_prod = df.det_ft_prod 
+                AND d.d_tienda = df.det_ft_tienda
+            LEFT JOIN factura_tf ft ON df.det_ft_fact = ft.fact_tf_num 
+                AND df.det_ft_tienda_fact = ft.fact_tf_tie
+            WHERE 1=1
+        """
+        
+        params = {}
+        if fecha:
+            sql += " AND TRUNC(d.d_fecha) = TO_DATE(:fecha, 'YYYY-MM-DD')"
+            params["fecha"] = fecha
+        if tienda_id:
+            sql += " AND d.d_tienda = :tienda_id"
+            params["tienda_id"] = int(tienda_id)
+        
+        sql += " ORDER BY d.d_fecha DESC, d.d_tienda, ft.fact_tf_num"
+        
+        cur.execute(sql, params)
+        descuentos = []
+        
+        for row in cur.fetchall():
+            descuentos.append({
+                "fecha_descuento": row[0].strftime("%Y-%m-%d %H:%M:%S") if row[0] else None,
+                "tienda_id": int(row[1]),
+                "nombre_tienda": row[2],
+                "lote_id": int(row[3]),
+                "producto_cod": int(row[4]),
+                "nombre_producto": row[5],
+                "cantidad_descontada": int(row[6]),
+                "factura_num": int(row[7]) if row[7] else None,
+                "fecha_factura": row[8].strftime("%Y-%m-%d") if row[8] else None
+            })
+        
+        cur.close()
+        conn.close()
+        
+        log_event("SUCCESS", f"Descuentos obtenidos: {len(descuentos)}")
+        return jsonify(descuentos), 200
+        
+    except Exception as e:
+        log_event("ERROR", f"Error en /api/v1/inventario/descuentos: {e}")
+        return jsonify({"error": "Error obteniendo descuentos", "detalle": str(e)}), 500
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# VENTAS ONLINE
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@app.route("/api/v1/catalogo-online/<int:pais_id>", methods=["GET"])
+def get_catalogo_online(pais_id):
+    """Obtiene el catálogo de productos disponibles para venta online por país"""
+    try:
+        log_event("API", f"GET /api/v1/catalogo-online/{pais_id}")
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        sql = """
+            SELECT 
+                p.pro_cod,
+                p.pro_nom,
+                p.pro_desc,
+                p.pro_raned,
+                p.pro_ranpr,
+                hp.hp_precio,
+                c.cat_limcom AS limite_compra
+            FROM productos p
+            JOIN catalogos c ON p.pro_cod = c.cat_prod
+            JOIN hist_precios hp ON p.pro_cod = hp.hp_prod AND hp.hp_ffin IS NULL
+            WHERE c.cat_pais = :pais_id
+            ORDER BY p.pro_nom
+        """
+        
+        cur.execute(sql, {"pais_id": pais_id})
+        catalogo = []
+        
+        for row in cur.fetchall():
+            catalogo.append({
+                "pro_cod": int(row[0]),
+                "pro_nom": row[1],
+                "pro_desc": row[2],
+                "pro_raned": row[3],
+                "pro_ranpr": int(row[4]) if row[4] else None,
+                "precio": float(row[5]) if row[5] else 0.0,
+                "limite_compra": int(row[6])
+            })
+        
+        cur.close()
+        conn.close()
+        
+        log_event("SUCCESS", f"Catálogo online obtenido para país {pais_id}: {len(catalogo)} productos")
+        return jsonify(catalogo), 200
+        
+    except Exception as e:
+        log_event("ERROR", f"Error en /api/v1/catalogo-online/{pais_id}: {e}")
+        return jsonify({"error": "Error obteniendo catálogo online", "detalle": str(e)}), 500
+
+@app.route("/api/v1/facturas-online/iniciar", methods=["POST"])
+def iniciar_factura_online():
+    """Inicia una factura online usando INICIAR_FACTURA_ONLINE"""
+    try:
+        data = request.get_json(force=True)
+        cli_id = data.get("cliente_id")
+        
+        if not cli_id:
+            return jsonify({"error": "Falta cliente_id"}), 400
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_fact_num = cur.var(oracledb.NUMBER)
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            INICIAR_FACTURA_ONLINE(
+                p_cli_id => :p_cli_id,
+                p_fact_o_num => :o_fact_num,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_cli_id": int(cli_id),
+            "o_fact_num": o_fact_num,
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        fact_num_raw = o_fact_num.getvalue()
+        msg_raw = o_msg.getvalue()
+        
+        fact_num = fact_num_raw[0] if isinstance(fact_num_raw, (list, tuple)) else fact_num_raw
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if fact_num is None:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Factura online iniciada: {fact_num}")
+        return jsonify({
+            "fact_num": int(fact_num),
+            "mensaje": msg
+        }), 201
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en iniciar_factura_online: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en iniciar_factura_online: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/facturas-online/<int:fact_num>/detalles", methods=["POST"])
+def agregar_detalle_online(fact_num):
+    """Agrega un detalle a la factura online usando INSERTAR_DETALLE_ONLINE"""
+    try:
+        data = request.get_json(force=True)
+        producto_cod = data.get("producto_cod")
+        cantidad = data.get("cantidad")
+        
+        if not producto_cod or not cantidad:
+            return jsonify({"error": "Faltan datos requeridos"}), 400
+        
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            INSERTAR_DETALLE_ONLINE(
+                p_fact_num => :p_fact_num,
+                p_pro_cod => :p_pro_cod,
+                p_cantidad => :p_cantidad,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_fact_num": int(fact_num),
+            "p_pro_cod": int(producto_cod),
+            "p_cantidad": int(cantidad),
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        msg_raw = o_msg.getvalue()
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if "Error" in msg:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Detalle agregado a factura online {fact_num}: {msg}")
+        return jsonify({"mensaje": msg}), 200
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en agregar_detalle_online: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en agregar_detalle_online: {e}")
+        return jsonify({"error": str(e)}), 500
+
+@app.route("/api/v1/facturas-online/<int:fact_num>/finalizar", methods=["POST"])
+def finalizar_factura_online(fact_num):
+    """Finaliza una factura online usando FINALIZAR_FACTURA_ONLINE"""
+    try:
+        conn = db_pool.get_connection()
+        cur = conn.cursor()
+        
+        o_msg = cur.var(oracledb.STRING)
+        
+        plsql = """
+        BEGIN
+            FINALIZAR_FACTURA_ONLINE(
+                p_fact_num => :p_fact_num,
+                p_msg => :o_msg
+            );
+        END;
+        """
+        
+        cur.execute(plsql, {
+            "p_fact_num": int(fact_num),
+            "o_msg": o_msg
+        })
+        
+        conn.commit()
+        
+        # Obtener información completa de la factura
+        cur.execute("""
+            SELECT 
+                fact_o_total,
+                fact_o_puntosgen,
+                venta_gratis,
+                fact_o_cli
+            FROM factura_o
+            WHERE fact_o_num = :fact_num
+        """, {"fact_num": int(fact_num)})
+        
+        row = cur.fetchone()
+        if not row:
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Factura no encontrada"}), 404
+        
+        # Obtener puntos acumulados totales del cliente
+        cur.execute("""
+            SELECT NVL(SUM(fact_o_puntosgen), 0)
+            FROM factura_o
+            WHERE fact_o_cli = :cli_id
+        """, {"cli_id": int(row[3])})
+        
+        puntos_row = cur.fetchone()
+        puntos_totales = int(puntos_row[0]) if puntos_row and puntos_row[0] else 0
+        
+        msg_raw = o_msg.getvalue()
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        cur.close()
+        conn.close()
+        
+        if "Error" in msg:
+            return jsonify({"error": msg}), 400
+        
+        log_event("SUCCESS", f"Factura online {fact_num} finalizada: {msg}")
+        return jsonify({
+            "fact_num": int(fact_num),
+            "total": float(row[0]),
+            "puntos_generados": int(row[1]),
+            "puntos_totales_cliente": puntos_totales,
+            "venta_gratis": row[2] == "SI",
+            "mensaje": msg
+        }), 200
+        
+    except oracledb.DatabaseError as e:
+        err = e.args[0]
+        log_event("ERROR", f"Error Oracle en finalizar_factura_online: {err}")
+        return jsonify({"error": str(err)}), 400
+    except Exception as e:
+        log_event("ERROR", f"Error general en finalizar_factura_online: {e}")
+        return jsonify({"error": str(e)}), 500
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN
