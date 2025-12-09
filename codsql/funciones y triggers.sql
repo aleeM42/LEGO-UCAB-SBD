@@ -754,15 +754,12 @@ begin
 end;
 /
 
-
 --triggers para la nac de los clientes 
 create or replace trigger nac_clientes
 before insert or update  on clientes 
 for each ROW
     declare v_ue varchar2(2);
 begin
-    -- estoy igualando mi variable local a la funcion de es_ue, pasando como parametro
-    -- la fk de cli.nac que va con id pais
     v_ue := es_ue(:new.cli_nac);  
 
     if v_ue = 'NO' then 
