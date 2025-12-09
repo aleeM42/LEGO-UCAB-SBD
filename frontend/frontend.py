@@ -1847,23 +1847,28 @@ Por favor, procede al pago para confirmar tu inscripción.
                 
                 if response.status_code == 200:
                     cliente = response.json()
-                    nombre = cliente.get('nombre_completo', 'N/A')
-                    dni = cliente.get('dni', 'N/A')
-                    if nombre == 'N/A' or not nombre:
-                        # Intentar construir nombre desde campos individuales
+                    # Construir nombre completo
+                    nombre = cliente.get('nombre_completo', '')
+                    if not nombre or nombre.strip() == '':
                         nombre = f"{cliente.get('cli_pnombre', '')} {cliente.get('cli_papellido', '')} {cliente.get('cli_sapellido', '')}".strip()
-                        if not nombre:
-                            nombre = 'N/A'
-                    if dni == 'N/A' or not dni:
-                        dni = cliente.get('cli_dni', 'N/A')
+                    if not nombre:
+                        nombre = 'N/A'
+                    
+                    # Obtener DNI
+                    dni = cliente.get('dni') or cliente.get('cli_dni')
+                    if dni is None:
+                        dni = 'N/A'
+                    
                     texto = f"Cliente: {nombre} | DNI: {dni}"
-                    self.label_info_cliente_fisica.config(text=texto, foreground="blue")
+                    self.label_info_cliente_fisica.config(text=texto, foreground="green")
+                    log_event("SUCCESS", f"Cliente consultado: {nombre} (ID: {cli_id})")
                 else:
                     error_msg = response.json().get("error", "Cliente no encontrado")
                     self.label_info_cliente_fisica.config(text=f"Error: {error_msg}", foreground="red")
+                    log_event("ERROR", f"Error consultando cliente {cli_id}: {error_msg}")
             except Exception as e:
-                log_event("ERROR", str(e))
-                self.label_info_cliente_fisica.config(text="Error consultando cliente", foreground="red")
+                log_event("ERROR", f"Error consultando cliente: {e}")
+                self.label_info_cliente_fisica.config(text=f"Error: {str(e)}", foreground="red")
         
         thread = threading.Thread(target=_consultar, daemon=True)
         thread.start()
@@ -1916,32 +1921,61 @@ Por favor, procede al pago para confirmar tu inscripción.
             messagebox.showwarning("Advertencia", "Ingresa código de producto y cantidad")
             return
         
+        try:
+            cantidad_int = int(cantidad)
+            pro_cod_int = int(pro_cod)
+        except ValueError:
+            messagebox.showerror("Error", "Cantidad y código deben ser números")
+            return
+        
+        # Validar stock disponible antes de agregar
+        producto_encontrado = None
+        for producto in self.catalogo_tienda:
+            if producto["pro_cod"] == pro_cod_int:
+                producto_encontrado = producto
+                break
+        
+        if not producto_encontrado:
+            messagebox.showerror("Error", f"Producto {pro_cod_int} no encontrado en el catálogo")
+            return
+        
+        # Calcular stock total disponible
+        stock_total = sum(l["stock_disponible"] for l in producto_encontrado["lotes"])
+        if cantidad_int > stock_total:
+            messagebox.showerror("Error", f"Stock insuficiente. Disponible: {stock_total}, Solicitado: {cantidad_int}")
+            return
+        
         def _agregar():
             try:
                 response = requests.post(
                     f"{API_BASE_URL}/api/v1/facturas-fisicas/{self.factura_fisica_actual}/detalles",
                     json={
                         "tienda_id": self.tienda_seleccionada,
-                        "producto_cod": int(pro_cod),
-                        "cantidad": int(cantidad)
+                        "producto_cod": pro_cod_int,
+                        "cantidad": cantidad_int
                     },
                     timeout=API_TIMEOUT
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
-                    detalle_texto = f"Prod {pro_cod} x {cantidad} - {data.get('mensaje', '')}"
+                    detalle_texto = f"Prod {pro_cod_int} x {cantidad_int} - {data.get('mensaje', '')}"
                     self.listbox_detalles_fisica.insert(tk.END, detalle_texto)
                     self.detalles_factura_fisica.append({
-                        "producto": int(pro_cod),
-                        "cantidad": int(cantidad)
+                        "producto": pro_cod_int,
+                        "cantidad": cantidad_int
                     })
                     self.entry_prod_cod_fisica.delete(0, tk.END)
                     self.entry_cantidad_fisica.delete(0, tk.END)
+                    
+                    # Actualizar catálogo para reflejar el nuevo stock
+                    self.cargar_catalogo_tienda(self.tienda_seleccionada)
+                    
                     log_event("SUCCESS", f"Detalle agregado: {detalle_texto}")
                 else:
                     error = response.json().get("error", "Error desconocido")
                     messagebox.showerror("Error", error)
+                    log_event("ERROR", f"Error agregando detalle: {error}")
             except Exception as e:
                 log_event("ERROR", str(e))
                 messagebox.showerror("Error", str(e))
@@ -2109,38 +2143,39 @@ Por favor, procede al pago para confirmar tu inscripción.
                 
                 if response.status_code == 200:
                     cliente = response.json()
+                    # Obtener país de residencia
                     self.pais_cliente_online = cliente.get("pais_residencia_id") or cliente.get("cli_reside")
-                    nombre = cliente.get('nombre_completo', 'N/A')
-                    pais = cliente.get('pais_residencia', 'N/A')
                     
-                    # Intentar construir nombre desde campos individuales si no existe
-                    if nombre == 'N/A' or not nombre:
+                    # Construir nombre completo
+                    nombre = cliente.get('nombre_completo', '')
+                    if not nombre or nombre.strip() == '':
                         nombre = f"{cliente.get('cli_pnombre', '')} {cliente.get('cli_papellido', '')} {cliente.get('cli_sapellido', '')}".strip()
-                        if not nombre:
-                            nombre = 'N/A'
+                    if not nombre:
+                        nombre = 'N/A'
                     
-                    # Obtener nombre del país si solo tenemos el ID
-                    if pais == 'N/A' or not pais:
+                    # Obtener nombre del país
+                    pais = cliente.get('pais_residencia', '')
+                    if not pais or pais.strip() == '':
                         pais = cliente.get('pais_nombre', 'N/A')
                     
                     texto = f"Cliente: {nombre} | País: {pais}"
-                    self.label_info_cliente_online.config(text=texto, foreground="blue")
+                    self.label_info_cliente_online.config(text=texto, foreground="green")
+                    log_event("SUCCESS", f"Cliente consultado: {nombre} (ID: {cli_id}), País: {pais} (ID: {self.pais_cliente_online})")
                     
                     # Cargar catálogo del país
                     if self.pais_cliente_online:
                         log_event("INFO", f"Cargando catálogo para país {self.pais_cliente_online}")
                         self.cargar_catalogo_online(self.pais_cliente_online)
                     else:
-                        self.label_info_cliente_online.config(
-                            text=f"{texto} | Error: No se pudo determinar el país", 
-                            foreground="orange"
-                        )
+                        messagebox.showwarning("Advertencia", "El cliente no tiene país de residencia configurado")
+                        self.label_info_cliente_online.config(text=f"{texto} - Sin país configurado", foreground="orange")
                 else:
                     error_msg = response.json().get("error", "Cliente no encontrado")
                     self.label_info_cliente_online.config(text=f"Error: {error_msg}", foreground="red")
+                    log_event("ERROR", f"Error consultando cliente {cli_id}: {error_msg}")
             except Exception as e:
-                log_event("ERROR", str(e))
-                self.label_info_cliente_online.config(text="Error consultando cliente", foreground="red")
+                log_event("ERROR", f"Error consultando cliente: {e}")
+                self.label_info_cliente_online.config(text=f"Error: {str(e)}", foreground="red")
         
         thread = threading.Thread(target=_consultar, daemon=True)
         thread.start()
@@ -2230,24 +2265,48 @@ Por favor, procede al pago para confirmar tu inscripción.
             messagebox.showwarning("Advertencia", "Ingresa código de producto y cantidad")
             return
         
+        try:
+            cantidad_int = int(cantidad)
+            pro_cod_int = int(pro_cod)
+        except ValueError:
+            messagebox.showerror("Error", "Cantidad y código deben ser números")
+            return
+        
+        # Validar límite de compra antes de agregar
+        producto_encontrado = None
+        for producto in self.catalogo_online:
+            if producto["pro_cod"] == pro_cod_int:
+                producto_encontrado = producto
+                break
+        
+        if not producto_encontrado:
+            messagebox.showerror("Error", f"Producto {pro_cod_int} no encontrado en el catálogo")
+            return
+        
+        # Validar límite de compra
+        limite_compra = producto_encontrado.get("limite_compra", 0)
+        if cantidad_int > limite_compra:
+            messagebox.showerror("Error", f"Límite de compra excedido. Máximo permitido: {limite_compra}, Solicitado: {cantidad_int}")
+            return
+        
         def _agregar():
             try:
                 response = requests.post(
                     f"{API_BASE_URL}/api/v1/facturas-online/{self.factura_online_actual}/detalles",
                     json={
-                        "producto_cod": int(pro_cod),
-                        "cantidad": int(cantidad)
+                        "producto_cod": pro_cod_int,
+                        "cantidad": cantidad_int
                     },
                     timeout=API_TIMEOUT
                 )
                 
                 if response.status_code == 200:
                     data = response.json()
-                    detalle_texto = f"Prod {pro_cod} x {cantidad} - {data.get('mensaje', '')}"
+                    detalle_texto = f"Prod {pro_cod_int} x {cantidad_int} - {data.get('mensaje', '')}"
                     self.listbox_detalles_online.insert(tk.END, detalle_texto)
                     self.detalles_factura_online.append({
-                        "producto": int(pro_cod),
-                        "cantidad": int(cantidad)
+                        "producto": pro_cod_int,
+                        "cantidad": cantidad_int
                     })
                     self.entry_prod_cod_online.delete(0, tk.END)
                     self.entry_cantidad_online.delete(0, tk.END)
@@ -2255,6 +2314,7 @@ Por favor, procede al pago para confirmar tu inscripción.
                 else:
                     error = response.json().get("error", "Error desconocido")
                     messagebox.showerror("Error", error)
+                    log_event("ERROR", f"Error agregando detalle: {error}")
             except Exception as e:
                 log_event("ERROR", str(e))
                 messagebox.showerror("Error", str(e))

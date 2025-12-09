@@ -1994,6 +1994,7 @@ END;
 /
 
 
+
 -- procedimiento para finalizar la factura de tienda fisica
 CREATE OR REPLACE PROCEDURE FINALIZAR_FACTURA_FISICA (
     p_ti_id IN NUMBER,

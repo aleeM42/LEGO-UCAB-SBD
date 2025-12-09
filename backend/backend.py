@@ -297,6 +297,8 @@ def obtener_cliente(cli_id):
         cliente_data["dni"] = cliente_data.get("cli_dni")
         cliente_data["pais_residencia"] = cliente_data.get("pais_nombre", "")
         cliente_data["pais_residencia_id"] = cliente_data.get("cli_reside")
+        cliente_data["pais_residencia"] = cliente_data.get("pais_nombre", "")
+        cliente_data["pais_residencia_id"] = cliente_data.get("cli_reside")
         
         return jsonify(cliente_data), 200
         
@@ -1090,19 +1092,32 @@ def get_catalogo_tienda(tienda_id):
                 hp.hp_precio,
                 l.lot_id,
                 l.lot_stock,
-                NVL(SUM(d.d_cantidad), 0) AS cantidad_descontada,
-                (l.lot_stock - NVL(SUM(d.d_cantidad), 0)) AS stock_disponible
+                NVL((
+                    SELECT SUM(d2.d_cantidad)
+                    FROM descuentos d2
+                    WHERE d2.d_tienda = l.lot_tienda
+                      AND d2.d_prod = l.lot_prod
+                      AND d2.d_lote = l.lot_id
+                ), 0) AS cantidad_descontada,
+                (l.lot_stock - NVL((
+                    SELECT SUM(d2.d_cantidad)
+                    FROM descuentos d2
+                    WHERE d2.d_tienda = l.lot_tienda
+                      AND d2.d_prod = l.lot_prod
+                      AND d2.d_lote = l.lot_id
+                ), 0)) AS stock_disponible
             FROM productos p
             JOIN lotes l ON p.pro_cod = l.lot_prod
             JOIN hist_precios hp ON p.pro_cod = hp.hp_prod AND hp.hp_ffin IS NULL
-            LEFT JOIN descuentos d ON l.lot_tienda = d.d_tienda
-                AND l.lot_prod = d.d_prod
-                AND l.lot_id = d.d_lote
             WHERE l.lot_tienda = :tienda_id
-            GROUP BY p.pro_cod, p.pro_nom, p.pro_desc, p.pro_raned, p.pro_ranpr, 
-                     hp.hp_precio, l.lot_id, l.lot_stock
-            HAVING (l.lot_stock - NVL(SUM(d.d_cantidad), 0)) > 0
-            ORDER BY p.pro_nom
+              AND (l.lot_stock - NVL((
+                    SELECT SUM(d2.d_cantidad)
+                    FROM descuentos d2
+                    WHERE d2.d_tienda = l.lot_tienda
+                      AND d2.d_prod = l.lot_prod
+                      AND d2.d_lote = l.lot_id
+                ), 0)) > 0
+            ORDER BY p.pro_nom, l.lot_id
         """
         
         cur.execute(sql, {"tienda_id": tienda_id})
@@ -1116,7 +1131,7 @@ def get_catalogo_tienda(tienda_id):
                     "pro_nom": row[1],
                     "pro_desc": row[2],
                     "pro_raned": row[3],
-                    "pro_ranpr": int(row[4]) if row[4] else None,
+                    "pro_ranpr": row[4] if row[4] else None,  # VARCHAR2, no NUMBER
                     "precio": float(row[5]) if row[5] else 0.0,
                     "lotes": []
                 }
@@ -1434,7 +1449,7 @@ def get_catalogo_online(pais_id):
                 "pro_nom": row[1],
                 "pro_desc": row[2],
                 "pro_raned": row[3],
-                "pro_ranpr": int(row[4]) if row[4] else None,
+                "pro_ranpr": row[4] if row[4] else None,  # VARCHAR2, no NUMBER
                 "precio": float(row[5]) if row[5] else 0.0,
                 "limite_compra": int(row[6])
             })
