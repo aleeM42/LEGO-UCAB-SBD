@@ -699,16 +699,14 @@ def registrar_cliente():
             );
         END;
         """
-        
-        # cli_snombre ahora es varchar2(30) en la tabla, así que podemos enviarlo directamente
-        p_snombre = data.get("p_snombre") if data.get("p_snombre") else None
+        p_snombre = data.get("p_snombre").upper() if data.get("p_snombre") else None
         
         cur.execute(
             plsql,
             {
-                "p_pnombre": data.get("p_pnombre"),
-                "p_papellido": data.get("p_papellido"),
-                "p_sapellido": data.get("p_sapellido"),
+                "p_pnombre": data.get("p_pnombre").upper(),
+                "p_papellido": data.get("p_papellido").upper(),
+                "p_sapellido": data.get("p_sapellido").upper(),
                 "p_dni": int(data.get("p_dni")),
                 "p_fnacimiento": data.get("p_fnacimiento"),
                 "p_nac": int(data.get("p_nac")),
@@ -811,15 +809,15 @@ def registrar_fan_lego():
             sql,
             {
                 "fl_id": fl_id,
-                "fl_pnombre": data.get("fl_pnombre"),
-                "fl_papellido": data.get("fl_papellido"),
-                "fl_sapellido": data.get("fl_sapellido"),
+                "fl_pnombre": data.get("fl_pnombre").upper(),
+                "fl_papellido": data.get("fl_papellido").upper(),
+                "fl_sapellido": data.get("fl_sapellido").upper(),
                 "fl_dni": int(data.get("fl_dni")),
                 "fl_fnacimiento": data.get("fl_fnacimiento"),
                 "fl_nac": int(data.get("fl_nac")),
                 "fl_numpas": data.get("fl_numpas") if data.get("fl_numpas") else None,
                 "fl_fvenpas": data.get("fl_fvenpas") if data.get("fl_fvenpas") else None,
-                "fl_snombre": data.get("fl_snombre") if data.get("fl_snombre") else None,
+                "fl_snombre": data.get("fl_snombre").upper() if data.get("fl_snombre").upper() else None,
                 "fl_repre": int(data.get("fl_repre")) if data.get("fl_repre") else None
             }
         )

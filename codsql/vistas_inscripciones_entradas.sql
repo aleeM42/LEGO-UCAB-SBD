@@ -105,9 +105,6 @@ LEFT JOIN det_inscrip di ON i.ins_num = di.det_ins_ins
 GROUP BY t.to_fini, t.to_cupos
 ORDER BY t.to_fini DESC;
 
--- ═══════════════════════════════════════════════════════════════════════════════
--- VISTAS PARA CATALOGO E INVENTARIO
--- ═══════════════════════════════════════════════════════════════════════════════
 
 -- vista catalogo con precios
 CREATE OR REPLACE VIEW vista_catalogo_precio AS
@@ -154,3 +151,4 @@ GROUP BY
     t.ti_nom, t.ti_id, pr.pro_nom, l.lot_prod, l.lot_id, l.lot_stock
 ORDER BY
     t.ti_nom, pr.pro_nom, l.lot_id;
+
