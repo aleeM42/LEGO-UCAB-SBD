@@ -162,11 +162,7 @@ VALUES ('DC', 'TEMA', 'Temas basados en el universo de DC Comics (Superhéroes c
     (SELECT te_id FROM TEMAS WHERE te_nom = 'PRODUCTOS BAJO LICENCIA' AND te_tipo = 'SERIE')
 );
 
-
-
-
-
-—-PRODUCTOS
+--PRODUCTOS
 INSERT INTO PRODUCTOS (
     pro_idtem,
     pro_nom,
