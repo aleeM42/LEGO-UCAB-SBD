@@ -46,8 +46,8 @@ create table temas (
     te_id number(4) primary key,
     te_nom varchar2(30) not null unique,
     te_tipo varchar2(10) not null,
-    te_desc varchar2(100) not null,
-    te_padre number(4),
+    te_desc varchar2(800) not null,
+    te_padre number(4) null,
 
     constraint fk_temasre foreign key (te_padre) references temas(te_id),
     constraint check_tipot check (te_tipo in('SERIE','TEMA'))
@@ -56,8 +56,8 @@ create table temas (
 create table productos (
     pro_cod number(4) not null unique,
     pro_idtem number(4) not null,
-    pro_nom varchar2(15) not null,
-    pro_desc varchar2(100) not null,
+    pro_nom varchar2(50) not null,
+    pro_desc varchar2(800) not null,
     pro_raned number(2) not null,
     pro_ranpr number(4) not null,
     pro_set varchar2(2) not null,
@@ -70,7 +70,6 @@ create table productos (
     constraint fk_temaprod foreign key (pro_idtem) references temas(te_id),
     constraint f_set foreign key (set_id, set_idtem) references productos (pro_cod, pro_idtem),
     constraint ck_setprod check (pro_set in( 'SI','NO'))
---set pertenece a un tema?
 );            
  
 --secuencia para clientes y fans lego
@@ -121,8 +120,8 @@ create sequence tiendas_seq start with 1 increment by 1;
 create table tiendas (
     ti_id number(4) primary key,
     ti_nom varchar2(30) not null,
-    ti_dic varchar2(30) not null,
-    ti_tel number(12) not null,
+    ti_dic varchar2(200) not null,
+    ti_tel varchar2(50) not null,
     ti_ciu number(4) not null,
     ti_pais number(4) not null,
     ti_estado number(4) not null,
@@ -134,87 +133,88 @@ create table tiendas (
 
 create table horarios (
     h_tid number(4) not null,
-    h_dia date not null,    
-    h_aper date not null,
-    h_cier date not null, 
+    h_dia number(1) not null,    
+    h_aper varchar2(5) not null,
+    h_cier varchar2(5) not null, 
     constraint pk_horarios primary key (h_dia, h_tid),
     constraint fk_tienda foreign key (h_tid) references tiendas(ti_id) 
     --hacer conversion de date a hora
 );
 
-create table prod_rela (
-  rela_prod_cod   number(4) not null,
-  rela_prod_idtem number(4) not null,
-  rela_idtem      number(4) not null,
-  rela_setcod     number(4) not null,
+CREATE TABLE prod_rela (
+    rela_prod_cod NUMBER(4) NOT NULL,
+    rela_prod_idtem NUMBER(4) NOT NULL,
+    rela_idtem NUMBER(4) NOT NULL,
+    rela_setcod NUMBER(4) NOT NULL,
 
-  constraint pk_prodrela primary key (
-    rela_prod_cod,
-    rela_prod_idtem,
-    rela_setcod,
-    rela_idtem
-  ),
+    CONSTRAINT pk_prodrela PRIMARY KEY (
+        rela_prod_cod,
+        rela_prod_idtem,
+        rela_setcod,
+        rela_idtem
+    ),
 
-  constraint fk_prodrela foreign key (rela_prod_cod, rela_prod_idtem)
-    references productos (pro_cod, pro_idtem),
+    CONSTRAINT fk_prodrela FOREIGN KEY (rela_prod_cod)
+        REFERENCES productos (pro_cod),
 
-  constraint fk_prodrela_rel foreign key (rela_setcod, rela_idtem)
-    references productos (pro_cod, pro_idtem)
+    CONSTRAINT fk_prodrela_rel FOREIGN KEY (rela_setcod)
+        REFERENCES productos (pro_cod)
 );
 
 
-create table catalogos (
-    cat_prod_idtem number(4) not null,    
-    cat_prod number(4) not null,
-    cat_pais number(4) not null,
-    cat_limcom number(3) not null,
 
-    constraint pk_catalogo primary key (cat_prod, cat_prod_idtem, cat_pais),
-    constraint fk_catprod foreign key (cat_prod, cat_prod_idtem) references productos (pro_cod, pro_idtem),
-    constraint fk_catpais foreign key (cat_pais) references paises (p_id)
+CREATE TABLE catalogos (   
+    cat_prod NUMBER(4) NOT NULL,
+    cat_pais NUMBER(4) NOT NULL,
+    cat_limcom NUMBER(3) NOT NULL,
+
+    CONSTRAINT pk_catalogo PRIMARY KEY (cat_prod,cat_pais),
+    CONSTRAINT fk_catprod FOREIGN KEY (cat_prod) REFERENCES productos (pro_cod),
+    CONSTRAINT fk_catpais FOREIGN KEY (cat_pais) REFERENCES paises (p_id)
 );
+
  
 --entidades entrada salida
  
-create table hist_precios (
-    hp_prod number(4) not null,
-    hp_idtem number(4) not null,
-    hp_fini date not null,
-    hp_precio number(4) not null,
-    hp_ffin date,
+CREATE TABLE hist_precios (
+    hp_prod NUMBER(10, 0) NOT NULL,
+    hp_fini DATE NOT NULL,
+    hp_precio NUMBER(10, 2) NOT NULL,
+    hp_ffin DATE,
 
-    constraint pk_histprecio primary key (hp_prod, hp_idtem, hp_fini),
-    constraint fk_prodhistpre foreign key (hp_prod, hp_idtem) references productos (pro_cod, pro_idtem)
+    CONSTRAINT pk_histprecio PRIMARY KEY (hp_prod, hp_fini),
+    CONSTRAINT fk_prodhistpre FOREIGN KEY (hp_prod) REFERENCES productos (pro_cod)
 );
+
 
 --secuencia para lotes y descuentos
 create sequence lotes_seq start with 1 increment by 1;
 create sequence descuentos_seq start with 1 increment by 1;
 
-create table lotes (
-    lot_prod number(4) not null,
-    lot_idtem number(4) not null,
-    lot_tienda number(4) not null,
-    lot_id number(4) not null,
-    lot_stock number(4) not null, 
+CREATE TABLE lotes ( 
+    lot_prod NUMBER(4) NOT NULL,
+    lot_tienda NUMBER(4) NOT NULL,
+    lot_id NUMBER(4) DEFAULT ON NULL lotes_seq.NEXTVAL NOT NULL,
+    lot_stock NUMBER(4) NOT NULL, 
 
-    constraint pk_lote primary key (lot_prod, lot_idtem, lot_tienda, lot_id),
-    constraint fk_loteprod foreign key (lot_prod, lot_idtem) references productos (pro_cod, pro_idtem),
-    constraint fk_lotetienda foreign key (lot_tienda) references tiendas (ti_id)
+    CONSTRAINT fk_loteprod FOREIGN KEY (lot_prod) REFERENCES productos (pro_cod),
+    CONSTRAINT fk_lotetienda FOREIGN KEY (lot_tienda) REFERENCES tiendas (ti_id),
+    CONSTRAINT pk_lote PRIMARY KEY (lot_tienda, lot_prod, lot_id)
 );
 
-create table descuentos (
-    d_lote number(4) not null,
-    d_prod number(4) not null,
-    d_idtem number(4) not null,
-    d_tienda number(4) not null,
-    d_id number(4) not null,
-    d_fecha date not null,
-    d_cantidad number(10) not null,
 
-    constraint pk_descuento primary key (d_lote, d_tienda, d_prod, d_idtem, d_id),
-    constraint fk_lotedesc foreign key (d_prod, d_idtem, d_tienda, d_lote) references lotes (lot_prod, lot_idtem, lot_tienda, lot_id)
+CREATE TABLE descuentos (
+    d_lote NUMBER(4) NOT NULL,
+    d_prod NUMBER(4) NOT NULL,
+    d_tienda NUMBER(4) NOT NULL,
+    d_id NUMBER(4) DEFAULT ON NULL descuentos_seq.NEXTVAL NOT NULL,
+    d_fecha DATE NOT NULL,
+    d_cantidad NUMBER(10) NOT NULL,
+
+    CONSTRAINT pk_descuento PRIMARY KEY (d_lote, d_tienda, d_prod, d_id),
+    CONSTRAINT fk_lotedesc FOREIGN KEY (d_prod, d_tienda, d_lote) REFERENCES lotes (lot_prod, lot_tienda, lot_id)
 );
+
 
 --secuencia pra inscripciones y entradas 
 create sequence inscripciones_seq start with 1 increment by 1;
@@ -264,29 +264,31 @@ create table det_inscrip (
 create sequence factura_tf_seq start with 1 increment by 1;
 create sequence factura_o_seq start with 1 increment by 1;
 
-create table factura_tf(
-    fact_tf_num number(4) primary key,
-    fact_tf_femision date not null,
-    fact_tf_total number(5) not null,
-    fact_tf_cli number(4) not null,
-    fact_tf_tie number(4) not null,
+CREATE TABLE factura_tf( 
+    fact_tf_num NUMBER(4) DEFAULT ON NULL factura_tf_seq.NEXTVAL NOT NULL,
+    fact_tf_femision DATE NOT NULL,
+    fact_tf_total NUMBER(5) NOT NULL,
+    fact_tf_cli NUMBER(4) NOT NULL,
+    fact_tf_tie NUMBER(4) NOT NULL,
 
-    constraint fk_tienda_fact foreign key (fact_tf_tie) references tiendas (ti_id),
-    constraint fk_cliente_fact_tf foreign key (fact_tf_cli) references clientes (cli_id)
-    --posible trigger para el calculo total
+    CONSTRAINT fk_tienda_fact FOREIGN KEY (fact_tf_tie) REFERENCES tiendas (ti_id),
+    CONSTRAINT fk_cliente_fact_tf FOREIGN KEY (fact_tf_cli) REFERENCES clientes (cli_id),
+    CONSTRAINT pk_facturatf PRIMARY KEY (fact_tf_tie, fact_tf_num)
 );
 
-create table factura_o (
-    fact_o_num number(4) primary key,
-    fact_o_femision date not null, 
-    fact_o_total number(5) not null,
-    fact_o_puntosgen number(3) not null,
-    fact_o_cli number(4) not null,
-    venta_gratis varchar(2), 
 
-    constraint ck_ventagrat check (venta_gratis in ('SI','NO')),
-    constraint fk_cliente_facto foreign key (fact_o_cli) references clientes (cli_id)
+CREATE TABLE factura_o (
+    fact_o_num NUMBER(10, 0) DEFAULT ON NULL factura_o_seq.NEXTVAL PRIMARY KEY,
+    fact_o_femision DATE NOT NULL, 
+    fact_o_total NUMBER(10, 2) NOT NULL,
+    fact_o_puntosgen NUMBER(5, 0) NOT NULL,
+    fact_o_cli NUMBER(10, 0) NOT NULL,
+    venta_gratis VARCHAR(2), 
+
+    CONSTRAINT ck_ventagrat CHECK (venta_gratis IN ('SI','NO')),
+    CONSTRAINT fk_cliente_facto FOREIGN KEY (fact_o_cli) REFERENCES clientes (cli_id)
 );
+
 
 --secuencia para detalle factura
 create sequence det_fact_tf_seq start with 1 increment by 1;
@@ -300,6 +302,7 @@ create table det_fact_t (
     det_ft_tienda number(4) not null,
     det_ft_prod number(4) not null,
     det_ft_idtem number(4) not null,
+    det_ft_tipo_cli VARCHAR2(8) not null,
 
     constraint pk_det_facturatf primary key (det_ft_fact, det_ft_id),
     constraint fk_fact_det_fact_tf foreign key (det_ft_fact) references factura_tf(fact_tf_num),
