@@ -1,7 +1,8 @@
+--------------------------------------------------------------------
+--------------------------- FUNCIONES ------------------------------
+--------------------------------------------------------------------
 
----------------------------------- FUNCIONES -------------------------------------------
-
-
+------------- FUNCIONES GENERALES—----------------------------------
 --funcion para calcular la edad
 create or replace function edad (fecha_nacimiento date) 
 RETURN number is 
@@ -20,28 +21,6 @@ BEGIN
     from paises where p_id = p_pais_id;
     return v_ue;
 end;
-/
-
---funcion para calcular el total
-create or replace function calcular_total (p_fact_num number)
-return number is 
-    v_total number := 0;
-begin 
-    SELECT nvl(sum(hp.hp_precio * d.det_ft_cantidad), 0) 
-    into v_total 
-    from factura_tf f 
-    JOIN det_fact_t d ON d.det_ft_fact = f.fact_tf_num
-    JOIN lotes l ON l.lot_prod = d.det_ft_prod
-    AND  l.lot_idtem = d.det_ft_idtem
-    AND l.lot_tienda = d.det_ft_tienda
-    AND l.lot_id = d.det_ft_lote
-    JOIN hist_precios hp ON hp.hp_prod = l.lot_prod
-    AND hp.hp_idtem = l.lot_idtem 
-    ANd f.fact_tf_femision BETWEEN hp.hp_fini AND nvl(hp.hp_ffin, f.fact_tf_femision)
-    where f.fact_tf_num = p_fact_num;
-
-    RETURN v_total;
-end;    
 /
 
 -----------------------------------------------------------
@@ -116,17 +95,7 @@ END fn_tour_disponible;
 /
 
 
---validar si cliente no-Ue necesita pasaporte 
-create or replace function fn_validar_pasaporte_requerido (p_nacionalidad_id number)
-return boolean is 
-    v_ue varchar2(2);
-begin
-    select p_ue into v_ue
-    from paises where p_id = p_nacionalidad_id;
 
-    return (v_ue = 'NO');
-end;
-/
 
 -- Función para validar si tour tiene cupos disponibles
 -- Modificada para permitir inscripciones en tours pasados sin validar cupos
@@ -273,6 +242,18 @@ begin
 end;
 /
 
+
+--validar si cliente no-Ue necesita pasaporte 
+create or replace function fn_validar_pasaporte_requerido (p_nacionalidad_id number)
+return boolean is 
+    v_ue varchar2(2);
+begin
+    select p_ue into v_ue
+    from paises where p_id = p_nacionalidad_id;
+
+    return (v_ue = 'NO');
+end;
+/
 -- funcion para validar edad del cliente 
 
 create or replace function validar_edad_cliente (p_cli_id number)
@@ -525,9 +506,71 @@ return true;
 end;
 /
 
+
+—------------------- FUNCIONES TIENDA—-------------------------------------------------
+
+-- funcion para obtener el numero del dia dado el nombre del dia
+CREATE OR REPLACE FUNCTION OBTENER_NUMERO_DIA (
+    p_nombre_dia IN VARCHAR2
+)
+RETURN NUMBER
+IS
+    v_dia_numerico NUMBER;
+BEGIN
+    CASE UPPER(p_nombre_dia)
+        WHEN 'DOMINGO' THEN
+            v_dia_numerico := 1;
+        WHEN 'LUNES' THEN
+            v_dia_numerico := 2;
+        WHEN 'MARTES' THEN
+            v_dia_numerico := 3;
+        WHEN 'MIÉRCOLES' THEN
+            v_dia_numerico := 4;
+        WHEN 'JUEVES' THEN
+            v_dia_numerico := 5;
+        WHEN 'VIERNES' THEN
+            v_dia_numerico := 6;
+        WHEN 'SÁBADO' THEN
+            v_dia_numerico := 7; 
+        ELSE
+            v_dia_numerico := NULL;
+    END CASE;
+
+    RETURN v_dia_numerico;
+END OBTENER_NUMERO_DIA;
+/
+
+-- funcion para obtener el rango de precio
+CREATE OR REPLACE FUNCTION obtener_letra_precio (
+    p_rango_precio IN VARCHAR2
+)
+RETURN VARCHAR2
+IS
+    v_letra_precio VARCHAR2(4); 
+BEGIN
+    CASE UPPER(TRIM(p_rango_precio))
+        WHEN '10-' THEN
+            v_letra_precio := 'A';
+        WHEN '10-70' THEN
+            v_letra_precio := 'B';
+        WHEN '70-200' THEN
+            v_letra_precio := 'C';
+        WHEN '200+' THEN
+            v_letra_precio := 'D';
+        ELSE
+            v_letra_precio := 'X'; 
+    END CASE;
+
+    RETURN v_letra_precio;
+    
+END obtener_letra_precio;
+/
+
 ------------------------------------------------------------------------------------------
-------------------------------------- TRIGGERS -------------------------------------------
+------------------------------------- TRIGGERS ------------------------------------
 ------------------------------------------------------------------------------------------
+
+—----------------------TRGIGGERS TOUR—----------------------------------
 
 --trigger para validar la edad del fan de legp y clientes en el detalle de la inscripcion
 CREATE OR REPLACE TRIGGER tr_validar_edad_inscripcion_tour
@@ -631,7 +674,7 @@ BEGIN
 end;
 /
 
---trigger para prevenir eleiminacion de inscripcion pagada 
+--trigger para prevenir eliminación de inscripción pagada 
 create or replace trigger tr_proteger_inscripcion_pagada 
 before delete on inscripciones 
 for each row 
@@ -760,70 +803,8 @@ begin
 end;
 /
 
---trigger para recargo de envio por pais de residencia de los clientes 
-create or replace trigger residencia_clientes
-before insert on factura_o
-for each row
-    declare 
-    v_pais_reside clientes.cli_reside%type; 
-    v_es_ue varchar2(2);
-BEGIN
-    select cli_reside into v_pais_reside from clientes 
-    where cli_id = :new.fact_o_cli;
 
-    v_es_ue := es_ue(v_pais_reside);
-
-    if v_es_ue = 'NO' then
-        :new.fact_o_total := :new.fact_o_total *  1.15;
-    else 
-        :new.fact_o_total := :new.fact_o_total * 1.05;
-
-    end if;
-end;        
-/
-
---trigger para verificar la edad del cliente en la factura online
-create or replace trigger validar_edad_fact_o
-before insert on factura_o
-for each row
-    declare 
-    v_fnac clientes.cli_fnacimiento%type;
-    v_edad number(2);
-BEGIN
-    select cli_fnacimiento into v_fnac from clientes where cli_id = :new.fact_o_cli;
-    v_edad := edad(v_fnac);
-
-    if v_edad < 21 then 
-        raise_application_error(-20004, 'Solo los clientes mayores a 21 años pueden realizar compras');
-    end if;
-end;       
-/
-
---trigger para verificar la edad del cliente en la factura de tienda 
-create or replace trigger validar_edad_fact_t
-before insert on factura_tf
-for each row
-    declare 
-    v_fnac clientes.cli_fnacimiento%type;
-    v_edad number(2);
-BEGIN
-    select cli_fnacimiento into v_fnac from clientes where cli_id = :new.fact_tf_cli;
-    v_edad := edad(v_fnac);
-
-    if v_edad < 21 then 
-        raise_application_error(-20004, 'Solo los clientes mayores a 21 años pueden realizar compras');
-    end if;
-end;   
-/
-
---trigger para no modificar la factura online
-create or replace trigger no_modifcar_fact_o
-before update on factura_o
-begin
-    raise_application_error(-20001, 'Las facturas online no pueden modificarse');
-end;
-/
-
+—---------------- TRIGGERS VENTAS ONLINE Y TIENDA FISICA —-----------------------------
 --trigger para no eliminar facturas online
 create or replace trigger no_eliminar_fact_o
 before delete on factura_o
@@ -832,12 +813,22 @@ begin
 end;
 /
 
---trigger para no modificar la factura de tienda
-create or replace trigger no_modifcar_fact_t
-before update on factura_tf
-begin
-    raise_application_error(-20001, 'Las facturas de tienda no pueden modificarse');
-end;
+--trigger para no eliminar detalle facturas online
+CREATE OR REPLACE TRIGGER trg_det_fact_o_no_delete
+BEFORE DELETE ON det_fact_o
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20003, 'No se permite la eliminación de registros en la tabla det_fact_o.');
+END;
+/
+
+--trigger para no actualizar detalle facturas online
+CREATE OR REPLACE TRIGGER trg_det_fact_o_no_update
+BEFORE UPDATE ON det_fact_o
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20004, 'No se permite la actualización de registros en la tabla det_fact_o.');
+END;
 /
 
 --trigger para no eliminar facturas de tienda
@@ -846,6 +837,115 @@ before delete on factura_tf
 begin  
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
+/
+
+--trigger para no actualizar detalle facturas de tienda fisica
+CREATE OR REPLACE TRIGGER tr_det_fact_t_no_update
+BEFORE UPDATE ON det_fact_t
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20007, 'No se permite actualizar registros en la tabla DET_FACT_T.');
+END;
+/
+
+--trigger para no eliminar detalle facturas de tienda fisica
+CREATE OR REPLACE TRIGGER tr_det_fact_t_no_delete
+BEFORE DELETE ON det_fact_t
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20008, 'No se permite eliminar registros en la tabla DET_FACT_T.');
+END;
+/
+
+CREATE OR REPLACE TRIGGER tr_descuentos_no_update
+BEFORE UPDATE ON descuentos
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20009, 'No se permite actualizar registros en la tabla DESCUENTOS.');
+END;
+/
+
+CREATE OR REPLACE TRIGGER tr_descuentos_no_delete
+BEFORE DELETE ON descuentos
+FOR EACH ROW
+BEGIN
+    RAISE_APPLICATION_ERROR(-20010, 'No se permite eliminar registros en la tabla DESCUENTOS.');
+END;
+/
+
+CREATE OR REPLACE TRIGGER TRG_PRODUCTO_RELACIONADO
+FOR INSERT ON PRODUCTOS
+COMPOUND TRIGGER
+
+    TYPE t_prods_reco IS RECORD (
+        pro_cod     PRODUCTOS.pro_cod%TYPE,
+        pro_idtem PRODUCTOS.pro_idtem%TYPE
+    );
+    TYPE tt_prods_reco IS TABLE OF t_prods_reco INDEX BY PLS_INTEGER;
+    
+    g_prods_insertados tt_prods_reco; 
+
+    AFTER EACH ROW IS
+    BEGIN
+        g_prods_insertados(g_prods_insertados.COUNT + 1).pro_cod := :NEW.pro_cod;
+        g_prods_insertados(g_prods_insertados.COUNT).pro_idtem := :NEW.pro_idtem;
+    END AFTER EACH ROW;
+
+    AFTER STATEMENT IS
+        CURSOR c_productos_existentes (p_idtem IN NUMBER) IS
+             SELECT
+                 pro_cod,
+                 pro_idtem
+             FROM
+                 productos
+             WHERE
+                 pro_idtem = p_idtem;
+                
+        v_idx PLS_INTEGER;
+        
+    BEGIN
+        v_idx := g_prods_insertados.FIRST;
+        
+        IF v_idx IS NOT NULL THEN
+            WHILE v_idx IS NOT NULL LOOP
+                
+                FOR r_existente IN c_productos_existentes(g_prods_insertados(v_idx).pro_idtem) LOOP
+                
+                    IF r_existente.pro_cod != g_prods_insertados(v_idx).pro_cod THEN
+                        INSERT INTO PROD_RELA (
+                            rela_prod_cod, rela_prod_idtem, rela_setcod, rela_idtem
+                        )
+                        VALUES (
+                            g_prods_insertados(v_idx).pro_cod,
+                            g_prods_insertados(v_idx).pro_idtem,
+                            r_existente.pro_cod,
+                            r_existente.pro_idtem
+                        );
+        
+                        INSERT INTO PROD_RELA (
+                            rela_prod_cod, rela_prod_idtem, rela_setcod, rela_idtem
+                        )
+                        VALUES (
+                            r_existente.pro_cod,
+                            r_existente.pro_idtem,
+                            g_prods_insertados(v_idx).pro_cod,
+                            g_prods_insertados(v_idx).pro_idtem
+                        );
+                        
+                    END IF;
+                END LOOP;
+                
+                v_idx := g_prods_insertados.NEXT(v_idx);
+            END LOOP;
+        END IF;
+
+    EXCEPTION
+        WHEN OTHERS THEN
+            RAISE;
+
+    END AFTER STATEMENT;
+
+END TRG_PRODUCTO_RELACIONADO;
 /
 
 -------------------------------------------------------------------------------------------
@@ -1498,4 +1598,809 @@ EXCEPTION
         RAISE_APPLICATION_ERROR(-20953, 
             'Error generando reporte edades: ' || SQLERRM);
 END sp_reporte_rangos_edad_tour;
+/
+
+------------------------------------------------------------------------------------------
+------------------- PROCEDIMIENTOS TIENDA—----------------------------
+------------------------------------------------------------------------------------------
+
+-- procedimiento para insertar productos en el inventario
+CREATE OR REPLACE PROCEDURE INSERTAR_LOTE_PRODUCTO (
+    p_nombre_producto IN VARCHAR2,
+    p_tienda_id IN NUMBER,
+    p_stock IN NUMBER
+)
+IS
+    v_pro_cod PRODUCTOS.pro_cod%TYPE;
+
+    e_producto_no_encontrado EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_producto_no_encontrado, -20001);
+BEGIN
+    BEGIN
+        SELECT
+            pro_cod
+        INTO
+            v_pro_cod
+        FROM
+            productos
+        WHERE
+            UPPER(pro_nom) = UPPER(p_nombre_producto);
+
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE e_producto_no_encontrado;
+    END;
+
+    INSERT INTO lotes (
+        lot_prod,
+        lot_tienda,
+        lot_stock
+    )
+    VALUES (
+        v_pro_cod,
+        p_tienda_id,
+        p_stock
+    );
+
+    COMMIT;
+
+EXCEPTION
+    WHEN e_producto_no_encontrado THEN
+        RAISE_APPLICATION_ERROR(-20001, 'ERROR: El producto con nombre "' || p_nombre_producto || '" no fue encontrado.');
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE;
+
+END INSERTAR_LOTE_PRODUCTO;
+/
+
+-- procedimiento para actualizar el historico del precio
+CREATE OR REPLACE PROCEDURE actualizar_precio_producto (
+    p_nombre_producto IN VARCHAR2,
+    p_nuevo_precio    IN NUMBER
+)
+AS
+    v_pro_cod         productos.pro_cod%TYPE;
+    v_precio_actual   hist_precios.hp_precio%TYPE := NULL;
+    v_fecha_actual    DATE := TRUNC(SYSDATE);
+    
+    e_producto_no_encontrado EXCEPTION;
+
+BEGIN
+    
+    BEGIN
+        SELECT pro_cod
+        INTO v_pro_cod
+        FROM productos
+        WHERE pro_nom = p_nombre_producto;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE e_producto_no_encontrado;
+    END;
+
+    BEGIN
+        SELECT hp_precio
+        INTO v_precio_actual
+        FROM hist_precios
+        WHERE hp_prod = v_pro_cod
+          AND hp_ffin IS NULL;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            v_precio_actual := NULL;  
+    END;
+
+    IF v_precio_actual IS NULL THEN
+        
+        DBMS_OUTPUT.PUT_LINE('No existe historial de precios. Insertando primer registro.');
+        
+        INSERT INTO hist_precios (
+            hp_prod,
+            hp_fini,
+            hp_precio,
+            hp_ffin
+        )
+        VALUES (
+            v_pro_cod,
+            v_fecha_actual,
+            p_nuevo_precio,
+            NULL
+        );
+        
+    ELSIF p_nuevo_precio <> v_precio_actual THEN 
+        
+        UPDATE hist_precios
+        SET hp_ffin = v_fecha_actual - 1
+        WHERE hp_prod = v_pro_cod
+          AND hp_ffin IS NULL;
+
+        INSERT INTO hist_precios (
+            hp_prod,
+            hp_fini,
+            hp_precio,
+            hp_ffin
+        )
+        VALUES (
+            v_pro_cod,
+            v_fecha_actual,
+            p_nuevo_precio,
+            NULL
+        );
+
+        DBMS_OUTPUT.PUT_LINE('Precio actualizado para el producto ' || p_nombre_producto || 
+                             '. De ' || v_precio_actual || ' a ' || p_nuevo_precio);
+    
+    ELSE
+        DBMS_OUTPUT.PUT_LINE('El precio ingresado es igual al precio actual (' || v_precio_actual || '). No se requiere actualización.');
+    END IF;
+
+    COMMIT;
+
+EXCEPTION
+    WHEN e_producto_no_encontrado THEN
+        DBMS_OUTPUT.PUT_LINE('Error: No se encontró el producto con el nombre "' || p_nombre_producto || '".');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error inesperado: ' || SQLERRM);
+        ROLLBACK;
+        
+END actualizar_precio_producto;
+/
+
+-- procedimiento para agregar productos al catalogo
+CREATE OR REPLACE PROCEDURE agregar_producto_a_catalogo (
+    p_nombre_producto IN productos.pro_nom%TYPE,
+    p_nombre_pais IN paises.p_nom%TYPE,
+    p_limite_compra IN catalogos.cat_limcom%TYPE
+)
+IS
+    v_pro_cod productos.pro_cod%TYPE;
+    v_pais_id paises.p_id%TYPE;
+BEGIN
+    SELECT pro_cod
+    INTO v_pro_cod
+    FROM productos
+    WHERE pro_nom = p_nombre_producto;
+
+    SELECT p_id
+    INTO v_pais_id
+    FROM paises
+    WHERE p_nom = p_nombre_pais;
+
+    INSERT INTO catalogos (
+        cat_prod,
+        cat_pais,
+        cat_limcom
+    ) VALUES (
+        v_pro_cod,
+        v_pais_id,
+        p_limite_compra
+    );
+
+    COMMIT;
+
+    DBMS_OUTPUT.PUT_LINE('Producto "' || p_nombre_producto || '" (ID: ' || v_pro_cod || ') agregado al catálogo de ' || p_nombre_pais || ' (ID: ' || v_pais_id || ') con límite de compra: ' || p_limite_compra);
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Error: No se encontró el producto o el país especificado.');
+    WHEN DUP_VAL_ON_INDEX THEN
+        DBMS_OUTPUT.PUT_LINE('Error: El producto ya existe en el catálogo para ese país.');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error inesperado al agregar el producto al catálogo: ' || SQLERRM);
+        ROLLBACK;
+END;
+/
+
+-- procedimiento para insertar el cliente por primera vez
+CREATE OR REPLACE PROCEDURE INSERTAR_CLIENTE (
+    p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
+    p_papellido     IN CLIENTES.cli_papellido%TYPE,
+    p_sapellido     IN CLIENTES.cli_sapellido%TYPE,
+    p_dni           IN CLIENTES.cli_dni%TYPE,
+    p_fnacimiento   IN CLIENTES.cli_fnacimiento%TYPE,
+    p_nac           IN CLIENTES.cli_nac%TYPE,
+    p_reside        IN CLIENTES.cli_reside%TYPE,
+    p_numpas        IN CLIENTES.cli_numpas%TYPE DEFAULT NULL,
+    p_fvenpas       IN CLIENTES.cli_fvenpas%TYPE DEFAULT NULL,
+    p_snombre       IN CLIENTES.cli_snombre%TYPE DEFAULT NULL
+)
+AS
+    v_error_msg     VARCHAR2(255);
+    v_dni_count     NUMBER; 
+BEGIN
+
+    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL OR p_reside IS NULL THEN
+        
+        v_error_msg := 'Error: Faltan datos obligatorios.';
+
+        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
+        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
+        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
+        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
+        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
+        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad (cli_nac);'; END IF;
+        IF p_reside IS NULL THEN v_error_msg := v_error_msg || ' País de residencia (cli_reside);'; END IF;
+
+        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
+    END IF;
+
+    SELECT COUNT(*)
+    INTO v_dni_count
+    FROM CLIENTES
+    WHERE cli_dni = p_dni;
+
+    IF v_dni_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro cliente.');
+    END IF;
+    
+    INSERT INTO CLIENTES (
+        cli_pnombre,
+        cli_papellido,
+        cli_sapellido,
+        cli_dni,
+        cli_fnacimiento,
+        cli_nac,
+        cli_reside,
+        cli_numpas,
+        cli_fvenpas,
+        cli_snombre
+    )
+    VALUES (
+        p_pnombre,
+        p_papellido,
+        p_sapellido,
+        p_dni,
+        p_fnacimiento,
+        p_nac,
+        p_reside,
+        p_numpas,
+        p_fvenpas,
+        p_snombre
+    );
+
+    COMMIT;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20001, 'Error en la inserción o integridad de datos: ' || SQLERRM);
+END INSERTAR_CLIENTE;
+/
+
+
+-- procedimiento para insertar productos
+CREATE OR REPLACE PROCEDURE insertar_producto (
+    p_id_tema_in     IN NUMBER,  
+    p_nombre_in      IN VARCHAR2,    
+    p_descripcion_in IN VARCHAR2,   
+    p_rango_edad_in  IN VARCHAR2,    
+    p_rango_precio_in IN VARCHAR2,  
+    p_es_set_in      IN VARCHAR2,    
+    p_instrucciones_in IN VARCHAR2 DEFAULT NULL, 
+    p_piezas_in      IN NUMBER DEFAULT NULL,    
+    p_id_set_padre_in IN NUMBER DEFAULT NULL     
+)
+AS
+    v_es_set_upper VARCHAR2(2);
+BEGIN
+    v_es_set_upper := UPPER(p_es_set_in);
+
+    IF v_es_set_upper NOT IN ('SI', 'NO') THEN
+        RAISE_APPLICATION_ERROR(-20008, 'El valor para "Es Set" (pro_set) debe ser "SI" o "NO".');
+    END IF;
+
+    INSERT INTO productos (
+        pro_idtem,
+        pro_nom,
+        pro_desc,
+        pro_raned,
+        pro_ranpr,
+        pro_set,
+        pro_instr,
+        pro_piecs,
+        set_id
+    )
+    VALUES (
+        p_id_tema_in,
+        p_nombre_in,
+        p_descripcion_in,
+        UPPER(p_rango_edad_in),
+        UPPER(p_rango_precio_in),
+        v_es_set_upper,
+        p_instrucciones_in,
+        p_piezas_in,
+        p_id_set_padre_in
+    );
+
+    COMMIT;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20009, 'Error al insertar producto: ' || SQLERRM);
+
+END insertar_producto;
+/
+
+-- procedimiento para insertar temas
+CREATE OR REPLACE PROCEDURE insertar_tema (
+    p_nombre_in   IN VARCHAR2,   
+    p_tipo_in     IN VARCHAR2,     
+    p_descripcion_in IN VARCHAR2,   
+    p_id_padre_in IN NUMBER DEFAULT NULL 
+)
+AS
+    v_tipo_upper VARCHAR2(10);
+BEGIN
+    v_tipo_upper := UPPER(p_tipo_in);
+
+    IF v_tipo_upper NOT IN ('SERIE', 'TEMA') THEN
+        RAISE_APPLICATION_ERROR(-20006, 'El tipo de tema debe ser "SERIE" o "TEMA".');
+    END IF;
+
+    INSERT INTO temas (
+        te_nom,
+        te_tipo,
+        te_desc,
+        te_padre
+    )
+    VALUES (
+        UPPER(p_nombre_in),
+        v_tipo_upper,
+        UPPER(p_descripcion_in),
+        p_id_padre_in
+    );
+
+    COMMIT;
+
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        RAISE_APPLICATION_ERROR(-20007, 'Error al insertar tema: ' || SQLERRM);
+
+END insertar_tema;
+/
+
+-- procedimiento para iniciar la factura de tienda fisica
+CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_FISICA (
+    p_cli_id IN NUMBER,
+    p_ti_id IN NUMBER,
+    p_fact_tf_num OUT NUMBER,
+    p_msg OUT VARCHAR2
+)
+AS
+    v_fact_num NUMBER;
+BEGIN
+    INSERT INTO factura_tf (
+        fact_tf_femision,
+        fact_tf_total,
+        fact_tf_cli,
+        fact_tf_tie
+    )
+    VALUES (
+        SYSDATE,
+        0,
+        p_cli_id,
+        p_ti_id
+    )
+    RETURNING fact_tf_num INTO v_fact_num;
+
+    p_fact_tf_num := v_fact_num;
+    p_msg := 'Exito. Cabecera iniciada. Factura: ' || v_fact_num;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        p_msg := 'Error al iniciar cabecera: ' || SQLERRM;
+        p_fact_tf_num := NULL;
+        ROLLBACK;
+END;
+/
+
+-- procedimiento para insertar detalles a la factura de tienda fisica
+CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_FISICA (
+    p_ti_id IN NUMBER,
+    p_fact_num IN NUMBER,
+    p_pro_cod IN NUMBER,
+    p_cantidad IN NUMBER,
+    p_msg OUT VARCHAR2
+)
+AS
+    v_lote_id NUMBER;
+    v_stock_disp NUMBER;
+    v_total_stock NUMBER;
+    v_precio_unitario NUMBER;
+    v_subtotal NUMBER;
+    v_pro_raned VARCHAR2(8);
+BEGIN
+    SELECT NVL(SUM(lot_stock), 0) INTO v_total_stock
+    FROM lotes
+    WHERE lot_tienda = p_ti_id AND lot_prod = p_pro_cod;
+    
+    IF v_total_stock < p_cantidad THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente en lotes para la cantidad requerida.');
+    END IF;
+
+    SELECT lot_id, lot_stock
+    INTO v_lote_id, v_stock_disp
+    FROM lotes
+    WHERE lot_tienda = p_ti_id
+      AND lot_prod = p_pro_cod
+    ORDER BY lot_stock DESC
+    FETCH FIRST 1 ROW ONLY;
+
+    SELECT hp_precio
+    INTO v_precio_unitario
+    FROM hist_precios
+    WHERE hp_prod = p_pro_cod
+      AND hp_ffin IS NULL;
+      
+    SELECT pro_raned
+    INTO v_pro_raned
+    FROM productos
+    WHERE pro_cod = p_pro_cod;
+    
+    v_subtotal := p_cantidad * v_precio_unitario;
+
+    INSERT INTO det_fact_t (
+        det_ft_cantidad,
+        det_ft_fact,
+        det_ft_tienda_fact,
+        det_ft_lote,
+        det_ft_prod,
+        det_ft_tienda_lote,
+        det_ft_tipo_cli
+    )
+    VALUES (
+        p_cantidad,
+        p_fact_num,
+        p_ti_id,
+        v_lote_id,
+        p_pro_cod,
+        p_ti_id,
+        v_pro_raned
+    );
+
+    INSERT INTO descuentos (
+        d_lote,
+        d_prod,
+        d_tienda,
+        d_fecha,
+        d_cantidad
+    )
+    VALUES (
+        v_lote_id,
+        p_pro_cod,
+        p_ti_id,
+        SYSDATE,
+        p_cantidad
+    );
+
+    UPDATE factura_tf
+    SET fact_tf_total = fact_tf_total + v_subtotal
+    WHERE fact_tf_tie = p_ti_id
+      AND fact_tf_num = p_fact_num;
+      
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20004, 'La factura ' || p_fact_num || ' en la tienda ' || p_ti_id || ' no existe.');
+    END IF;
+    
+    p_msg := 'Exito. Detalle insertado. Lote: ' || v_lote_id || ' Subtotal: ' || v_subtotal;
+    
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_msg := 'Error: No se encontro un lote valido para el producto o no tiene precio activo.';
+        ROLLBACK;
+    WHEN OTHERS THEN
+        p_msg := 'Error al insertar detalle: ' || SQLERRM;
+        ROLLBACK;
+END;
+/
+
+
+-- procedimiento para finalizar la factura de tienda fisica
+CREATE OR REPLACE PROCEDURE FINALIZAR_FACTURA_FISICA (
+    p_ti_id IN NUMBER,
+    p_fact_num IN NUMBER,
+    p_msg OUT VARCHAR2
+)
+AS
+    v_total NUMBER;
+BEGIN
+    SELECT NVL(SUM(dt.det_ft_cantidad * hp.hp_precio), 0)
+    INTO v_total
+    FROM det_fact_t dt
+    JOIN HIST_PRECIOS hp ON dt.det_ft_prod = hp.hp_prod AND hp.hp_ffin IS NULL
+    WHERE dt.det_ft_tienda_fact = p_ti_id
+      AND dt.det_ft_fact = p_fact_num;
+    
+    p_msg := 'Exito. Factura FINALIZADA, lista para COMMIT. Total calculado: ' || v_total;
+    
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_msg := 'Error: No se encontro detalles para la factura.';
+        ROLLBACK;
+    WHEN OTHERS THEN
+        p_msg := 'Error al finalizar factura: ' || SQLERRM;
+        ROLLBACK;
+END;
+/
+
+-- procedimiento para iniciar la factura de venta online
+CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_ONLINE (
+    p_cli_id IN NUMBER,
+    p_fact_o_num OUT NUMBER, 
+    p_msg OUT VARCHAR2
+)
+AS
+    v_fact_num NUMBER;
+BEGIN
+    INSERT INTO factura_o (
+        fact_o_femision,
+        fact_o_total,
+        fact_o_puntosgen,
+        fact_o_cli,
+        venta_gratis
+    )
+    VALUES (
+        SYSDATE,
+        0, 
+        0, 
+        p_cli_id,
+        'NO'
+    )
+    RETURNING fact_o_num INTO v_fact_num; 
+
+    p_fact_o_num := v_fact_num;
+    p_msg := 'Exito. Cabecera online iniciada. Factura: ' || v_fact_num;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        p_msg := 'Error al iniciar cabecera online: ' || SQLERRM;
+        p_fact_o_num := NULL;
+        ROLLBACK;
+END;
+/
+
+-- procedimiento para insertar detalles a la factura de venta online
+CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_ONLINE (
+    p_fact_num IN NUMBER, 
+    p_pro_cod IN NUMBER,
+    p_cantidad IN NUMBER,
+    p_msg OUT VARCHAR2
+)
+AS
+    v_cli_id             clientes.cli_id%TYPE;
+    v_pais_residencia    clientes.cli_reside%TYPE;
+    v_precio_unitario    hist_precios.hp_precio%TYPE;
+    v_pro_raned          productos.pro_raned%TYPE;
+    v_subtotal           NUMBER;
+    v_limite_catalogo    catalogos.cat_limcom%TYPE; 
+    
+    e_limite_excedido EXCEPTION; 
+BEGIN
+    SELECT fo.fact_o_cli, c.cli_reside
+    INTO v_cli_id, v_pais_residencia
+    FROM factura_o fo
+    JOIN clientes c ON fo.fact_o_cli = c.cli_id
+    WHERE fo.fact_o_num = p_fact_num;
+
+    SELECT hp.hp_precio, pro.pro_raned, c.cat_limcom
+    INTO v_precio_unitario, v_pro_raned, v_limite_catalogo
+    FROM productos pro
+    JOIN hist_precios hp ON pro.pro_cod = hp.hp_prod AND hp.hp_ffin IS NULL
+    JOIN catalogos c ON pro.pro_cod = c.cat_prod
+    WHERE pro.pro_cod = p_pro_cod 
+      AND c.cat_pais = v_pais_residencia; 
+      
+    IF p_cantidad > v_limite_catalogo THEN
+        RAISE e_limite_excedido;
+    END IF;
+
+    v_subtotal := p_cantidad * v_precio_unitario;
+
+    INSERT INTO det_fact_o (
+        det_fo_fact,
+        det_fo_pais,
+        det_fo_prod,
+        det_fo_cantidad,
+        det_fo_tipo_cli 
+    )
+    VALUES (
+        p_fact_num,
+        v_pais_residencia,
+        p_pro_cod,
+        p_cantidad,
+        v_pro_raned
+    );
+
+    UPDATE factura_o
+    SET fact_o_total = fact_o_total + v_subtotal
+    WHERE fact_o_num = p_fact_num;
+    
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20005, 'La factura online ' || p_fact_num || ' no existe.');
+    END IF;
+    
+    p_msg := 'Exito. Detalle online insertado. Subtotal: ' || v_subtotal;
+    
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_msg := 'Error: El producto no existe, no tiene precio actual, o no está catalogado para el país del cliente.';
+        ROLLBACK;
+    WHEN e_limite_excedido THEN
+        p_msg := 'Error: La cantidad (' || p_cantidad || ') excede el límite de compra del catálogo (' || v_limite_catalogo || ').';
+        ROLLBACK;
+    WHEN OTHERS THEN
+        p_msg := 'Error al insertar detalle online: ' || SQLERRM;
+        ROLLBACK;
+END;
+/
+
+-- procedimiento para finalizar la factura de ventas online
+CREATE OR REPLACE PROCEDURE FINALIZAR_FACTURA_ONLINE (
+    p_fact_num IN NUMBER,
+    p_msg OUT VARCHAR2
+)
+AS
+    v_cli_id              factura_o.fact_o_cli%TYPE;
+    v_pais_id             clientes.cli_reside%TYPE;
+    v_es_ue               paises.p_ue%TYPE;
+    v_total_detalles      NUMBER;
+    v_total_final         NUMBER;
+    v_recargo_adicional   NUMBER; 
+    
+    v_costo_envio         NUMBER; 
+    v_puntos_acumulados_ant NUMBER;
+    v_puntos_generados    NUMBER := 0;
+    v_venta_gratis        factura_o.venta_gratis%TYPE := 'NO';
+    v_recargo_porcentaje  NUMBER;
+    
+    e_total_cero EXCEPTION;
+BEGIN
+    SELECT SUM(df.det_fo_cantidad * hp.hp_precio), fo.fact_o_cli
+    INTO v_total_detalles, v_cli_id
+    FROM det_fact_o df
+    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod AND hp.hp_ffin IS NULL
+    JOIN factura_o fo ON df.det_fo_fact = fo.fact_o_num
+    WHERE df.det_fo_fact = p_fact_num
+    GROUP BY fo.fact_o_cli;
+    
+    IF v_total_detalles IS NULL OR v_total_detalles <= 0 THEN
+        RAISE e_total_cero;
+    END IF;
+    
+    v_costo_envio := 
+        CASE 
+            WHEN v_total_detalles >= 500 THEN 20
+            WHEN v_total_detalles >= 100 THEN 15
+            ELSE 10 
+        END;
+
+    SELECT c.cli_reside, p.p_ue
+    INTO v_pais_id, v_es_ue
+    FROM clientes c
+    JOIN paises p ON c.cli_reside = p.p_id
+    WHERE c.cli_id = v_cli_id;
+
+    IF UPPER(v_es_ue) = 'SI' THEN
+        v_recargo_porcentaje := 0.05; 
+    ELSE
+        v_recargo_porcentaje := 0.15; 
+    END IF;
+    
+    SELECT NVL(SUM(fact_o_puntosgen), 0) INTO v_puntos_acumulados_ant
+    FROM factura_o
+    WHERE fact_o_cli = v_cli_id
+      AND fact_o_num < p_fact_num;
+      
+    IF v_puntos_acumulados_ant >= 500 THEN
+        v_recargo_adicional := v_costo_envio * v_recargo_porcentaje;
+        v_total_final := v_costo_envio + v_recargo_adicional;
+        
+        v_venta_gratis := 'SI';
+        v_puntos_generados := 0; 
+        
+        p_msg := 'Factura ' || p_fact_num || ' finalizada. ¡Venta GRATIS aplicada! Total: ' 
+            || v_total_final || ' (Solo Envío y Recargo Adicional). Puntos reseteados.';
+    ELSE
+        v_recargo_adicional := v_total_detalles * v_recargo_porcentaje;
+        v_total_final := v_total_detalles + v_recargo_adicional + v_costo_envio;
+        
+        v_puntos_generados := 
+            CASE 
+                WHEN v_total_detalles >= 200 THEN 200 
+                WHEN v_total_detalles >= 70 THEN 50  
+                WHEN v_total_detalles >= 10 THEN 20  
+                ELSE 5 
+            END;
+
+        p_msg := 'Factura ' || p_fact_num || ' finalizada. Total: ' 
+            || v_total_final || ' (Envío: ' || v_costo_envio || ' + Recargo Adicional: ' || v_recargo_porcentaje * 100 || '%). Puntos obtenidos: ' || v_puntos_generados;
+    END IF;
+    
+    UPDATE factura_o
+    SET fact_o_total = v_total_final,
+        fact_o_puntosgen = v_puntos_generados,
+        venta_gratis = v_venta_gratis
+    WHERE fact_o_num = p_fact_num;
+
+    COMMIT;
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        p_msg := 'Error: Factura Online ' || p_fact_num || ' no encontrada o no tiene detalles válidos.';
+        ROLLBACK;
+    WHEN e_total_cero THEN
+        p_msg := 'Error: Factura Online ' || p_fact_num || ' no tiene detalles o el total es cero.';
+        ROLLBACK;
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_msg := 'Error al finalizar factura online: ' || SQLERRM;
+END FINALIZAR_FACTURA_ONLINE;
+/
+
+CREATE OR REPLACE PROCEDURE CONVERTIR_PRECIOS_TIENDA (
+    p_tienda_id IN NUMBER,
+    p_tasa_conversion IN NUMBER DEFAULT 1.08 
+)
+AS
+    v_pais_id       NUMBER(4);
+    v_es_ue         VARCHAR2(2);
+    v_fecha_actual  DATE := TRUNC(SYSDATE); 
+    v_precio_actual NUMBER(10, 2);
+
+    CURSOR c_productos IS
+        SELECT
+            l.lot_prod,
+            hp.hp_precio
+        FROM lotes l
+        JOIN hist_precios hp ON l.lot_prod = hp.hp_prod
+        WHERE l.lot_tienda = p_tienda_id
+          AND hp.hp_ffin IS NULL;
+
+BEGIN
+    DBMS_OUTPUT.ENABLE(NULL);
+    
+    SELECT ti_pais INTO v_pais_id
+    FROM tiendas
+    WHERE ti_id = p_tienda_id;
+
+    SELECT p_ue INTO v_es_ue
+    FROM paises
+    WHERE p_id = v_pais_id;
+
+    IF v_es_ue = 'NO' THEN
+
+        FOR r_prod IN c_productos LOOP
+
+            v_precio_actual := r_prod.hp_precio;
+            
+            DECLARE
+                v_nuevo_precio NUMBER(10, 2) := ROUND(v_precio_actual * p_tasa_conversion, 2);
+            BEGIN
+                IF v_nuevo_precio <> v_precio_actual THEN
+
+                    UPDATE hist_precios
+                    SET hp_precio = v_nuevo_precio
+                    WHERE hp_prod = r_prod.lot_prod
+                      AND hp_ffin IS NULL;
+
+                END IF;
+            END; 
+            
+        END LOOP;
+        DBMS_OUTPUT.PUT_LINE('Proceso completado. Se ACTUALIZARON los precios a USD para la tienda ' || p_tienda_id);
+
+    ELSIF v_es_ue = 'SI' THEN
+        DBMS_OUTPUT.PUT_LINE('Tienda ' || p_tienda_id || ' pertenece a la UE. No se realizó ninguna conversión de precios.');
+    END IF;
+
+    COMMIT; 
+
+EXCEPTION
+    WHEN NO_DATA_FOUND THEN
+        DBMS_OUTPUT.PUT_LINE('Error: Tienda o País no encontrado.');
+    WHEN OTHERS THEN
+        DBMS_OUTPUT.PUT_LINE('Error SQL: ' || SQLERRM);
+        ROLLBACK;
+END CONVERTIR_PRECIOS_TIENDA;
 /
