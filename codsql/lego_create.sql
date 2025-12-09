@@ -88,7 +88,7 @@ create table clientes (
     cli_reside number(4) not null,
     cli_numpas NUMBER(10),
     cli_fvenpas date,
-    cli_snombre number(4),
+    cli_snombre varchar2(30),
 
     constraint fk_residecliente foreign key (cli_reside) references paises(p_id),
     constraint fk_pais foreign key (cli_nac) references paises(p_id)
@@ -247,17 +247,17 @@ create sequence det_inscrip_seq start with 1 increment by 1;
 create table det_inscrip (
     det_ins_id number(4) primary key,
     det_ins_ins number(4) not null,
-    det_ins_tipo char(2) not null,
+    det_ins_tipo varchar2(15) not null,
     det_ins_fan number(4), 
     det_ins_cli number(4),
 
     constraint fk_detins_fanlego foreign key (det_ins_fan) references f_lego (fl_id),
     constraint fk_detins_cliente foreign key (det_ins_cli) references clientes (cli_id),
     constraint fk_inscripciondet foreign key (det_ins_ins) references inscripciones (ins_num),
+    constraint ck_tipo_cliente check (det_ins_tipo in ('MENOR', 'ADULTO')),
     constraint chek_arcoexc check(
     (det_ins_fan is not null and det_ins_cli is null)
     or (det_ins_fan is null and det_ins_cli is not null)) 
-    --constraint ck_arcoex check ( nvl2(det_insc_fan, 1,0) + nvl2(det_insc_cli, 1,0))
 );
 
 --secuencia para facturas

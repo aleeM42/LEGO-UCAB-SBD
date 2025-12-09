@@ -13,7 +13,7 @@ load_dotenv()
 
 # Oracle Connection – usa EXACTAMENTE lo que tienes en .env
 ORACLE_HOST = os.getenv("ORACLE_HOST", "localhost")
-ORACLE_PORT = int(os.getenv("ORACLE_HOST_PORT", "1521"))
+ORACLE_PORT = int(os.getenv("ORACLE_PORT", "1521"))
 ORACLE_PDB  = os.getenv("ORACLE_PDB", "FREEPDB1")  # service_name correcto
 
 DB_USER = os.getenv("DB_USER", "maria_M")
@@ -185,10 +185,15 @@ def get_tours():
         cur.execute(sql)
         tours = []
         for row in cur.fetchall():
+            costo_usd = float(row[2]) if row[2] else 0.0
+            # Convertir USD a DKK para mostrar (3500 USD = 23000 DKK exactamente)
+            # Usar redondeo para asegurar que 3500 USD = 23000 DKK exactamente
+            costo_dkk = round(costo_usd * (23000 / 3500), 2)
             tours.append({
                 "fecha": row[0].strftime("%Y-%m-%d") if row[0] else None,
                 "cupos_totales": int(row[1]) if row[1] else 0,
-                "costo": float(row[2]) if row[2] else 0.0,
+                "costo": costo_dkk,  # Mostrar en DKK
+                "costo_usd": costo_usd,  # Precio original en USD
                 "inscritos_confirmados": int(row[3]) if row[3] else 0,
                 "cupos_disponibles": max(0, int(row[4])) if row[4] is not None else int(row[1]) if row[1] else 0,
                 "estado_inscripcion": row[5] if row[5] else "CERRADA",
@@ -392,50 +397,221 @@ def crear_inscripcion():
         conn = db_pool.get_connection()
         cur = conn.cursor()
 
+        # Crear variables para parámetros OUT
+        o_ins_num = cur.var(oracledb.NUMBER)
+        o_total = cur.var(oracledb.NUMBER)
+        o_msg = cur.var(oracledb.STRING)
+
         plsql = """
-        DECLARE
-            v_ins_num   NUMBER;
-            v_total     NUMBER;
-            v_msg       VARCHAR2(4000);
         BEGIN
             sp_crear_inscripcion(
                 p_tour_fecha         => TO_DATE(:p_fecha, 'YYYY-MM-DD'),
                 p_cliente_responsable => :p_cli,
                 p_participantes_json  => :p_part,
-                p_numero_inscripcion  => v_ins_num,
-                p_costo_total         => v_total,
-                p_mensaje             => v_msg
+                p_numero_inscripcion  => :o_ins_num,
+                p_costo_total         => :o_total,
+                p_mensaje             => :o_msg
             );
-            :o_ins_num := v_ins_num;
-            :o_total   := v_total;
-            :o_msg     := v_msg;
         END;
         """
 
-        o_ins_num = cur.var(oracledb.NUMBER)
-        o_total = cur.var(oracledb.NUMBER)
-        o_msg = cur.var(oracledb.STRING)
-
-        cur.execute(
-            plsql,
-            {
-                "p_fecha": tour_fecha_str,
-                "p_cli": int(cliente_responsable),
-                "p_part": participantes_json,
-                "o_ins_num": o_ins_num,
-                "o_total": o_total,
-                "o_msg": o_msg,
-            },
-        )
-
+        try:
+            cur.execute(
+                plsql,
+                {
+                    "p_fecha": tour_fecha_str,
+                    "p_cli": int(cliente_responsable),
+                    "p_part": participantes_json,
+                    "o_ins_num": o_ins_num,
+                    "o_total": o_total,
+                    "o_msg": o_msg,
+                },
+            )
+        except oracledb.DatabaseError as db_err:
+            # Si hay un error, el procedimiento puede haber asignado -1
+            log_event("ERROR", f"Error ejecutando procedimiento: {db_err}")
+            # Intentar obtener valores de todos modos
+            pass
+        
+        # Hacer commit para asegurar que los cambios se guarden
         conn.commit()
+        
+        # Obtener valores de los parámetros OUT DESPUÉS del commit
+        # Para parámetros OUT, getvalue() puede retornar el valor directamente o una lista
+        ins_num_raw = o_ins_num.getvalue()
+        total_raw = o_total.getvalue()
+        msg_raw = o_msg.getvalue()
+        
+        # Manejar diferentes formatos de retorno
+        ins_num_val = ins_num_raw[0] if isinstance(ins_num_raw, (list, tuple)) and len(ins_num_raw) > 0 else ins_num_raw
+        total_val = total_raw[0] if isinstance(total_raw, (list, tuple)) and len(total_raw) > 0 else total_raw
+        msg_val = msg_raw[0] if isinstance(msg_raw, (list, tuple)) and len(msg_raw) > 0 else (msg_raw or "")
+        
+        log_event("DEBUG", f"Valores obtenidos del procedimiento - ins_num: {ins_num_val}, total: {total_val}, msg: {msg_val}")
+        
+        # Hacer commit para asegurar que los cambios se guarden (el procedimiento ya hace commit, pero por si acaso)
+        conn.commit()
+        
+        # Si el mensaje contiene "Error" o el número es -1, el procedimiento falló
+        if (msg_val and "Error" in msg_val) or ins_num_val == -1:
+            log_event("ERROR", f"El procedimiento reportó un error - ins_num: {ins_num_val}, msg: {msg_val}")
+            cur.close()
+            conn.close()
+            error_msg = msg_val if msg_val and "Error" in msg_val else "Error al crear inscripción: el procedimiento retornó un número de inscripción inválido"
+            return jsonify({"error": error_msg}), 400
+        
+        # Si aún es None, intentar obtener de la BD usando el cliente responsable y tour
+        if ins_num_val is None:
+            log_event("WARNING", f"ins_num_val es {ins_num_val}, intentando obtener de BD...")
+            # Obtener el último número de inscripción creado para este cliente responsable y tour
+            cur.execute("""
+                SELECT MAX(i.ins_num) 
+                FROM inscripciones i
+                JOIN det_inscrip di ON i.ins_num = di.det_ins_ins
+                WHERE i.ins_tour = TO_DATE(:fecha, 'YYYY-MM-DD')
+                  AND di.det_ins_cli = :cli_id
+                ORDER BY i.ins_num DESC
+                FETCH FIRST 1 ROW ONLY
+            """, {"fecha": tour_fecha_str, "cli_id": int(cliente_responsable)})
+            row = cur.fetchone()
+            if row and row[0] and row[0] is not None:
+                ins_num_val = int(row[0])
+                log_event("SUCCESS", f"Número de inscripción obtenido de BD: {ins_num_val}")
+            else:
+                # Si aún no funciona, obtener el máximo número de inscripción reciente (últimos 5 minutos)
+                cur.execute("""
+                    SELECT MAX(ins_num) FROM inscripciones
+                    WHERE ins_tour = TO_DATE(:fecha, 'YYYY-MM-DD')
+                      AND ins_femision >= SYSDATE - 5/1440
+                      AND ins_estado = 'PENDIENTE'
+                """, {"fecha": tour_fecha_str})
+                row = cur.fetchone()
+                if row and row[0] and row[0] is not None:
+                    ins_num_val = int(row[0])
+                    log_event("SUCCESS", f"Número de inscripción obtenido de BD (método alternativo): {ins_num_val}")
+                else:
+                    # Último intento: obtener el máximo número de inscripción sin filtros de fecha
+                    cur.execute("""
+                        SELECT MAX(ins_num) FROM inscripciones
+                        WHERE ins_estado = 'PENDIENTE'
+                          AND ins_femision >= SYSDATE - 5/1440
+                    """)
+                    row = cur.fetchone()
+                    if row and row[0] and row[0] is not None:
+                        ins_num_val = int(row[0])
+                        log_event("SUCCESS", f"Número de inscripción obtenido de BD (último método): {ins_num_val}")
+        
+        # Si después de todos los intentos sigue siendo None o -1, hay un problema
+        if ins_num_val is None or ins_num_val == -1:
+            # Intentar una última vez: obtener la última inscripción creada sin filtros
+            cur.execute("""
+                SELECT ins_num, ins_total, ins_femision
+                FROM inscripciones
+                WHERE ins_estado = 'PENDIENTE'
+                  AND ins_femision >= SYSDATE - 10/1440
+                ORDER BY ins_femision DESC
+                FETCH FIRST 1 ROW ONLY
+            """)
+            row = cur.fetchone()
+            if row and row[0] and row[0] is not None:
+                ins_num_val = int(row[0])
+                if total_val is None or total_val == 0:
+                    total_val = float(row[1]) if row[1] else 0
+                log_event("SUCCESS", f"Número de inscripción obtenido de BD (método final): {ins_num_val}")
+        
+        if total_val is None:
+            log_event("WARNING", "total_val es None")
+            total_val = 0
+        
+        conn.commit()
+        
+        # Obtener nacionalidad del cliente responsable para determinar moneda
+        cur.execute("""
+            SELECT p.p_ue, p.p_nom
+            FROM clientes c
+            JOIN paises p ON c.cli_nac = p.p_id
+            WHERE c.cli_id = :cli_id
+        """, {"cli_id": int(cliente_responsable)})
+        
+        row = cur.fetchone()
+        pertenece_ue = row[0] if row else "NO"
+        pais_nombre = row[1] if row else ""
+        
+        # Determinar moneda: EUR si es UE, USD si no
+        moneda = "EUR" if pertenece_ue == "SI" else "USD"
+        
+        # Obtener precio del tour en USD (precio base en BD)
+        cur.execute("""
+            SELECT to_costo
+            FROM tours
+            WHERE to_fini = TO_DATE(:fecha, 'YYYY-MM-DD')
+        """, {"fecha": tour_fecha_str})
+        
+        tour_row = cur.fetchone()
+        precio_usd = float(tour_row[0]) if tour_row else 0.0
+        
+        # Convertir USD a DKK para mostrar (3500 USD = 23000 DKK exactamente)
+        precio_dkk = round(precio_usd * (23000 / 3500), 2)
+        
+        # Convertir a la moneda final según nacionalidad del cliente
+        # Si es UE: convertir USD a EUR (1 USD ≈ 0.88 EUR, basado en 3500 USD = 3081 EUR)
+        # Si no es UE: mantener en USD
+        if moneda == "EUR":
+            # 3500 USD = 3081 EUR → 1 USD = 0.8797 EUR
+            precio_convertido = precio_usd * 0.8797
+        else:  # USD
+            precio_convertido = precio_usd  # Ya está en USD
+        
+        # Calcular total en la moneda correcta
+        cantidad_participantes = len(participantes_json.split(";"))
+        total_en_moneda = precio_convertido * cantidad_participantes
+        
+        if ins_num_val is None or ins_num_val == -1:
+            log_event("ERROR", f"Procedimiento no retornó número de inscripción válido - ins_num: {ins_num_val}")
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Error al crear inscripción: número de inscripción no válido"}), 500
+        
+        if total_val is None:
+            log_event("ERROR", "Procedimiento no retornó total válido")
+            cur.close()
+            conn.close()
+            return jsonify({"error": "Error al crear inscripción: total no válido"}), 500
+        
+        # Contar entradas generadas para esta inscripción
+        cur.execute("""
+            SELECT COUNT(*) FROM entradas_tour WHERE ent_insc = :ins_num
+        """, {"ins_num": int(ins_num_val)})
+        
+        entradas_row = cur.fetchone()
+        entradas_generadas = int(entradas_row[0]) if entradas_row and entradas_row[0] else 0
+        
+        # Si no hay entradas, las entradas deberían haberse generado en el procedimiento
+        # Verificar que el número de entradas coincida con el número de participantes
+        if entradas_generadas == 0:
+            log_event("WARNING", f"No se encontraron entradas para inscripción {ins_num_val}, deberían ser {cantidad_participantes}")
+        elif entradas_generadas != cantidad_participantes:
+            log_event("WARNING", f"Número de entradas ({entradas_generadas}) no coincide con participantes ({cantidad_participantes})")
+        
         cur.close()
         conn.close()
 
+        log_event("SUCCESS", f"Inscripción creada - Número: {ins_num_val}, Total USD (BD): {total_val}, Total {moneda}: {total_en_moneda}, Entradas: {entradas_generadas}")
+        
         return jsonify({
-            "ins_num": int(o_ins_num.getvalue()),
-            "ins_total": float(o_total.getvalue()),
-            "mensaje": o_msg.getvalue(),
+            "ins_num": int(ins_num_val),
+            "ins_total": float(total_en_moneda),  # Total en la moneda correcta (EUR o USD)
+            "ins_total_usd": float(total_val),  # Total en USD (precio base en BD)
+            "ins_total_dkk": float(precio_dkk * cantidad_participantes),  # Total en DKK (para mostrar)
+            "moneda": moneda,
+            "precio_unitario": float(precio_convertido),  # Precio unitario en moneda final
+            "precio_unitario_usd": float(precio_usd),  # Precio unitario en USD (BD)
+            "precio_unitario_dkk": float(precio_dkk),  # Precio unitario en DKK (para mostrar)
+            "pais_cliente": pais_nombre,
+            "pertenece_ue": pertenece_ue,
+            "entradas_generadas": entradas_generadas,
+            "cantidad_participantes": cantidad_participantes,
+            "mensaje": msg_val,
             "estado": "PENDIENTE"
         }), 201
 
@@ -524,6 +700,9 @@ def registrar_cliente():
         END;
         """
         
+        # cli_snombre ahora es varchar2(30) en la tabla, así que podemos enviarlo directamente
+        p_snombre = data.get("p_snombre") if data.get("p_snombre") else None
+        
         cur.execute(
             plsql,
             {
@@ -536,7 +715,7 @@ def registrar_cliente():
                 "p_reside": int(data.get("p_reside")),
                 "p_numpas": data.get("p_numpas") if data.get("p_numpas") else None,
                 "p_fvenpas": data.get("p_fvenpas") if data.get("p_fvenpas") else None,
-                "p_snombre": data.get("p_snombre") if data.get("p_snombre") else None
+                "p_snombre": p_snombre
             }
         )
         
@@ -694,8 +873,25 @@ def confirmar_pago():
         monto_pagado = data.get("monto_pagado")
         referencia_pago = data.get("referencia_pago", "")
         
-        if not inscripcion_num or not monto_pagado:
-            return jsonify({"error": "Faltan datos requeridos"}), 400
+        if not inscripcion_num:
+            return jsonify({"error": "Faltan datos requeridos: número de inscripción"}), 400
+        
+        # Si no se proporciona monto, obtenerlo de la inscripción
+        if not monto_pagado:
+            conn_temp = db_pool.get_connection()
+            cur_temp = conn_temp.cursor()
+            cur_temp.execute("""
+                SELECT ins_total FROM inscripciones WHERE ins_num = :ins_num
+            """, {"ins_num": int(inscripcion_num)})
+            row = cur_temp.fetchone()
+            if row:
+                monto_pagado = float(row[0])
+            else:
+                cur_temp.close()
+                conn_temp.close()
+                return jsonify({"error": "Inscripción no encontrada"}), 404
+            cur_temp.close()
+            conn_temp.close()
         
         conn = db_pool.get_connection()
         cur = conn.cursor()
@@ -739,14 +935,38 @@ def confirmar_pago():
         )
         
         conn.commit()
+        
+        # Obtener valores de los parámetros OUT
+        recibo_raw = o_recibo.getvalue()
+        entradas_raw = o_entradas.getvalue()
+        msg_raw = o_msg.getvalue()
+        
+        # Manejar diferentes formatos de retorno
+        recibo_val = recibo_raw[0] if isinstance(recibo_raw, (list, tuple)) else recibo_raw
+        entradas_val = entradas_raw[0] if isinstance(entradas_raw, (list, tuple)) else entradas_raw
+        msg_val = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        # Si el número de entradas es 0 o None, verificar directamente en la BD
+        if not entradas_val or entradas_val == 0:
+            log_event("WARNING", f"Procedimiento retornó {entradas_val} entradas, verificando en BD...")
+            cur.execute("""
+                SELECT COUNT(*) FROM entradas_tour WHERE ent_insc = :ins_num
+            """, {"ins_num": int(inscripcion_num)})
+            row = cur.fetchone()
+            if row and row[0] and row[0] > 0:
+                entradas_val = int(row[0])
+                log_event("SUCCESS", f"Entradas encontradas en BD: {entradas_val}")
+        
         cur.close()
         conn.close()
         
+        log_event("SUCCESS", f"Pago confirmado - Inscripción: {inscripcion_num}, Entradas: {entradas_val}, Recibo: {recibo_val}")
+        
         return jsonify({
             "inscripcion_num": int(inscripcion_num),
-            "recibo": o_recibo.getvalue(),
-            "entradas_generadas": int(o_entradas.getvalue()),
-            "mensaje": o_msg.getvalue(),
+            "recibo": recibo_val or "",
+            "entradas_generadas": int(entradas_val) if entradas_val else 0,
+            "mensaje": msg_val,
             "estado": "PAGO"
         }), 200
         

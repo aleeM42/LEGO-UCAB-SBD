@@ -200,7 +200,7 @@ class FrontendLegoTours:
                 values=(
                     fecha,
                     cupos_totales,
-                    f"${costo:.2f}",
+                    f"{costo:.2f} DKK",  # Precio en coronas danesas
                     cupos_disponibles,
                     estado,
                     tipo_fecha
@@ -262,7 +262,8 @@ class FrontendLegoTours:
             return
         
         self.fecha_tour_seleccionada = fecha_tour
-        costo_str = values[2].replace("$", "").replace(",", "")
+        # Extraer solo el número del costo (puede ser "3500.00 DKK" o "$3500.00")
+        costo_str = values[2].replace("$", "").replace(",", "").replace("DKK", "").strip()
         self.tour_seleccionado = {
             "fecha": fecha_tour,
             "cupos_totales": int(values[1]),
@@ -272,7 +273,7 @@ class FrontendLegoTours:
         
         self.label_tour_info.config(
             text=f"✓ Tour: {self.tour_seleccionado['fecha']} - "
-                 f"${self.tour_seleccionado['costo_unitario']:.2f}/persona - "
+                 f"{self.tour_seleccionado['costo_unitario']:.2f} DKK/persona - "
                  f"{self.tour_seleccionado['cupos_disponibles']} cupos disponibles",
             foreground="green"
         )
@@ -1092,7 +1093,7 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         cost_frame = ttk.LabelFrame(scrollable, text="Cálculo de Costo")
         cost_frame.pack(fill=tk.X, padx=10, pady=5)
         
-        self.label_costo_unitario = ttk.Label(cost_frame, text="Costo unitario: $0.00")
+        self.label_costo_unitario = ttk.Label(cost_frame, text="Costo unitario: 0.00 DKK")
         self.label_costo_unitario.pack(pady=5)
         
         self.label_cantidad_participantes = ttk.Label(cost_frame, text="Participantes: 0")
@@ -1120,7 +1121,7 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         if self.tour_seleccionado:
             self.label_res_tour.config(
                 text=f"Fecha: {self.tour_seleccionado['fecha']} | "
-                     f"Costo: ${self.tour_seleccionado['costo_unitario']:.2f}",
+                     f"Costo: {self.tour_seleccionado['costo_unitario']:.2f} DKK",
                 foreground="green"
             )
         
@@ -1130,18 +1131,19 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         
         if self.tour_seleccionado and cantidad > 0:
             self.label_costo_unitario.config(
-                text=f"Costo unitario: ${self.tour_seleccionado['costo_unitario']:.2f}"
+                text=f"Costo unitario: {self.tour_seleccionado['costo_unitario']:.2f} DKK"
             )
-            costo_total = self.tour_seleccionado['costo_unitario'] * cantidad
-            self.label_costo_total.config(text=f"COSTO TOTAL: ${costo_total:,.2f}")
+            costo_total_dkk = self.tour_seleccionado['costo_unitario'] * cantidad
+            # El costo total se mostrará en la moneda correcta cuando se cree la inscripción
+            self.label_costo_total.config(text=f"COSTO TOTAL (DKK): {costo_total_dkk:,.2f}")
         else:
-            self.label_costo_total.config(text="COSTO TOTAL: $0.00")
+            self.label_costo_total.config(text="COSTO TOTAL: 0.00 DKK")
     
     def crear_inscripcion(self):
         """Crear inscripción en BD usando sp_crear_inscripcion"""
         if not self.tour_seleccionado or len(self.participantes_agregados) == 0:
-             messagebox.showwarning("Error", "Selecciona tour y agrega participantes")
-        return
+            messagebox.showwarning("Error", "Selecciona tour y agrega participantes")
+            return
 
         if not self.cliente_responsable_id:
             messagebox.showwarning("Error", "Debes consultar y seleccionar un cliente responsable")
@@ -1156,39 +1158,48 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         
         participantes_json = ";".join(participantes_parts)
 
-    try:
-        payload = {
-            "tour_fecha": self.tour_seleccionado['fecha'],
+        try:
+            payload = {
+                "tour_fecha": self.tour_seleccionado['fecha'],
                 "cliente_responsable": self.cliente_responsable_id,
-            "participantes_json": participantes_json
-        }
+                "participantes_json": participantes_json
+            }
 
-        log_event("API", f"Creando inscripción vía sp_crear_inscripcion...")
+            log_event("API", f"Creando inscripción vía sp_crear_inscripcion...")
             log_event("API", f"Participantes: {participantes_json}")
-        response = requests.post(
-            f"{API_BASE_URL}/api/v1/inscripciones/crear",
-            json=payload,
-            timeout=API_TIMEOUT
-        )
+            response = requests.post(
+                f"{API_BASE_URL}/api/v1/inscripciones/crear",
+                json=payload,
+                timeout=API_TIMEOUT
+            )
 
-        if response.status_code == 201:
-            resultado = response.json()
-            self.inscripcion_actual = resultado
+            if response.status_code == 201:
+                resultado = response.json()
+                self.inscripcion_actual = resultado
                 log_event("SUCCESS", f"Inscripción creada: {resultado.get('ins_num')} - Estado: PENDIENTE")
+                
+                # Actualizar información de pago antes de cambiar de pestaña
+                self.actualizar_info_pago()
+                
+                # Obtener moneda para mostrar
+                moneda = resultado.get('moneda', 'USD')
+                simbolo = "€" if moneda == "EUR" else "$"
+                monto = resultado.get('ins_total', 0)
+                
                 messagebox.showinfo("Éxito", 
                     f"✓ Inscripción creada exitosamente\n\n"
                     f"Número: {resultado.get('ins_num')}\n"
-                    f"Total: ${resultado.get('ins_total', 0):,.2f}\n"
+                    f"Total: {simbolo}{monto:,.2f} {moneda}\n"
                     f"Estado: PENDIENTE POR PAGAR\n\n"
                     f"Procede al pago para confirmar.")
                 self.notebook.select(4)  # Ir a pestaña de pago
-        else:
-            error_msg = response.json().get('error', f"Error {response.status_code}")
-            log_event("ERROR", error_msg)
-            messagebox.showerror("Error", f"Error creando inscripción: {error_msg}")
-    except Exception as e:
-        log_event("ERROR", str(e))
-        messagebox.showerror("Error", f"Error: {e}")
+            else:
+                error_msg = response.json().get('error', f"Error {response.status_code}")
+                log_event("ERROR", error_msg)
+                messagebox.showerror("Error", f"Error creando inscripción: {error_msg}")
+        except Exception as e:
+            log_event("ERROR", str(e))
+            messagebox.showerror("Error", f"Error: {e}")
 
     
     def crear_pestaña_pago(self):
@@ -1220,30 +1231,28 @@ País: {rep_data.get('pais_nombre', 'N/A')}
                                          font=("Arial", 12, "bold"), foreground="blue")
         self.label_insc_monto.pack(pady=10)
         
-        # Método de pago
+        # Método de pago (simplificado - solo para mostrar)
         pay_frame = ttk.LabelFrame(frame, text="Método de Pago")
         pay_frame.pack(fill=tk.X, padx=10, pady=10)
         
         ttk.Label(pay_frame, text="Método:").pack(anchor=tk.W, padx=10)
         self.combo_metodo_pago = ttk.Combobox(
             pay_frame,
-            values=["TARJETA CRÉDITO", "TARJETA DÉBITO", "TRANSFERENCIA BANCARIA", "PAYPAL"],
+            values=["TARJETA CRÉDITO", "TARJETA DÉBITO", "TRANSFERENCIA BANCARIA"],
             state="readonly",
             width=40
         )
+        self.combo_metodo_pago.set("TARJETA CRÉDITO")  # Valor por defecto
         self.combo_metodo_pago.pack(padx=10, pady=5)
         
-        # Datos pago
+        # Datos pago (simplificado - solo CVV)
         datos_frame = ttk.LabelFrame(frame, text="Datos de Pago")
         datos_frame.pack(fill=tk.X, padx=10, pady=10)
         
-        ttk.Label(datos_frame, text="Titular:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_titular = ttk.Entry(datos_frame, width=40)
-        self.entry_titular.grid(row=0, column=1, padx=10, pady=8)
-        
-        ttk.Label(datos_frame, text="Número de Tarjeta/Cuenta:").grid(row=1, column=0, sticky=tk.W, padx=10, pady=8)
-        self.entry_numero = ttk.Entry(datos_frame, width=40, show="*")
-        self.entry_numero.grid(row=1, column=1, padx=10, pady=8)
+        ttk.Label(datos_frame, text="CVV de la Tarjeta:").grid(row=0, column=0, sticky=tk.W, padx=10, pady=8)
+        self.entry_cvv = ttk.Entry(datos_frame, width=10, show="*")
+        self.entry_cvv.grid(row=0, column=1, padx=10, pady=8, sticky=tk.W)
+        ttk.Label(datos_frame, text="(3 o 4 dígitos)", font=("Arial", 9), foreground="gray").grid(row=0, column=2, sticky=tk.W, padx=5)
         
         # Botones
         button_frame = ttk.Frame(frame)
@@ -1255,33 +1264,38 @@ País: {rep_data.get('pais_nombre', 'N/A')}
                   command=self.cancelar_pago).pack(side=tk.LEFT, padx=5)
     
     def procesar_pago(self):
-        """Procesar pago usando sp_confirmar_pago_inscripcion"""
+        """Procesar pago usando sp_confirmar_pago_inscripcion (simplificado - solo CVV)"""
         if not self.inscripcion_actual:
             messagebox.showwarning("Error", "No hay inscripción para procesar pago")
             return
         
-        metodo = self.combo_metodo_pago.get()
-        if not metodo:
-            messagebox.showwarning("Error", "Selecciona un método de pago")
+        # Validar CVV (cualquier 3-4 dígitos)
+        cvv = self.entry_cvv.get().strip()
+        if not cvv:
+            messagebox.showwarning("Error", "Ingresa el CVV de la tarjeta")
             return
         
-        titular = self.entry_titular.get().strip()
-        numero = self.entry_numero.get().strip()
-        
-        if not titular or not numero:
-            messagebox.showwarning("Error", "Completa los datos de pago")
+        if not cvv.isdigit() or len(cvv) < 3 or len(cvv) > 4:
+            messagebox.showwarning("Error", "El CVV debe tener 3 o 4 dígitos")
             return
         
         try:
             ins_num = self.inscripcion_actual.get('ins_num')
             monto_total = self.inscripcion_actual.get('ins_total', 0)
+            moneda = self.inscripcion_actual.get('moneda', 'USD')
+            metodo = self.combo_metodo_pago.get() or "TARJETA CRÉDITO"
+            
+            # Si el monto es 0, obtenerlo de la inscripción en la BD
+            if monto_total == 0:
+                # El backend ya maneja esto, pero por si acaso
+                pass
             
             # Generar referencia de pago
             referencia_pago = f"{metodo}-{ins_num}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
             
             payload = {
                 "inscripcion_num": ins_num,
-                "moneda_pago": "USD",
+                "moneda_pago": moneda,
                 "monto_pagado": monto_total,
                 "referencia_pago": referencia_pago
             }
@@ -1302,10 +1316,21 @@ País: {rep_data.get('pais_nombre', 'N/A')}
                 log_event("SUCCESS", f"Pago confirmado - Recibo: {resultado.get('recibo')}")
                 log_event("SUCCESS", f"Entradas generadas: {resultado.get('entradas_generadas')}")
                 
+                # Obtener número de entradas (del resultado del pago o de la inscripción original)
+                entradas_pago = resultado.get('entradas_generadas', 0)
+                entradas_inscripcion = self.inscripcion_actual.get('entradas_generadas', 0)
+                cantidad_participantes = self.inscripcion_actual.get('cantidad_participantes', 0)
+                
+                # Usar el valor del pago si es > 0, sino usar el de la inscripción, sino usar cantidad de participantes
+                entradas_finales = entradas_pago if entradas_pago > 0 else (entradas_inscripcion if entradas_inscripcion > 0 else cantidad_participantes)
+                
+                # Actualizar el valor en inscripcion_actual para que se muestre correctamente
+                self.inscripcion_actual['entradas_generadas'] = entradas_finales
+                
                 messagebox.showinfo("Éxito", 
                     f"✓ Pago confirmado exitosamente\n\n"
                     f"Recibo: {resultado.get('recibo')}\n"
-                    f"Entradas generadas: {resultado.get('entradas_generadas')}\n"
+                    f"Entradas generadas: {entradas_finales}\n"
                     f"Estado: PAGO\n\n"
                     f"Las entradas han sido generadas automáticamente.")
                 self.notebook.select(5)  # Ir a confirmación
@@ -1325,13 +1350,17 @@ País: {rep_data.get('pais_nombre', 'N/A')}
             ins_num = self.inscripcion_actual.get('ins_num')
             monto = self.inscripcion_actual.get('ins_total', 0)
             estado = self.inscripcion_actual.get('estado', 'PENDIENTE')
+            moneda = self.inscripcion_actual.get('moneda', 'USD')
+            
+            # Símbolo de moneda
+            simbolo = "€" if moneda == "EUR" else "$"
             
             self.label_insc_num.config(text=f"Inscripción: #{ins_num}")
             self.label_insc_estado.config(
                 text=f"Estado: {estado}",
                 foreground="orange" if estado == "PENDIENTE" else "green"
             )
-            self.label_insc_monto.config(text=f"Monto a pagar: ${monto:,.2f} USD")
+            self.label_insc_monto.config(text=f"Monto a pagar: {simbolo}{monto:,.2f} {moneda}")
         else:
             self.label_insc_num.config(text="Inscripción: No creada")
             self.label_insc_estado.config(text="Estado: -")
@@ -1344,9 +1373,8 @@ País: {rep_data.get('pais_nombre', 'N/A')}
     
     def limpiar_pago(self):
         """Limpiar form pago"""
-        self.combo_metodo_pago.set("")
-        self.entry_titular.delete(0, tk.END)
-        self.entry_numero.delete(0, tk.END)
+        self.combo_metodo_pago.set("TARJETA CRÉDITO")
+        self.entry_cvv.delete(0, tk.END)
     
     def crear_pestaña_confirmacion(self):
         """Pestaña 5: Confirmación Final"""
@@ -1387,8 +1415,8 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         button_frame = ttk.Frame(scrollable)
         button_frame.pack(fill=tk.X, padx=10, pady=15)
         
-        ttk.Button(button_frame, text="🖨️ DESCARGAR COMPROBANTE", 
-                  command=self.descargar_comprobante).pack(side=tk.LEFT, padx=5)
+        ttk.Button(button_frame, text="💾 GUARDAR INSCRIPCIÓN", 
+                  command=self.guardar_inscripcion).pack(side=tk.LEFT, padx=5)
         ttk.Button(button_frame, text="🔄 NUEVA INSCRIPCIÓN", 
                   command=self.nueva_inscripcion).pack(side=tk.LEFT, padx=5)
     
@@ -1399,19 +1427,28 @@ País: {rep_data.get('pais_nombre', 'N/A')}
             self.label_conf.delete(1.0, tk.END)
             self.label_conf.insert(tk.END, comprobante)
     
-    def descargar_comprobante(self):
-        """Descargar comprobante"""
+    def guardar_inscripcion(self):
+        """Guardar inscripción en la base de datos"""
         if not self.inscripcion_actual:
-            messagebox.showwarning("Error", "No hay inscripción")
+            messagebox.showwarning("Error", "No hay inscripción para guardar")
             return
         
-        comprobante = self.generar_comprobante()
+        ins_num = self.inscripcion_actual.get('ins_num')
+        if ins_num is None or ins_num == -1:
+            messagebox.showerror("Error", "La inscripción no se creó correctamente. Por favor, crea la inscripción primero.")
+            return
         
-        # Mostrar en la pestaña
+        # La inscripción ya se guarda automáticamente cuando se crea
+        # Este botón solo confirma que está guardada
+        messagebox.showinfo("Inscripción Guardada", 
+            f"✓ La inscripción #{ins_num} está guardada en la base de datos.\n\n"
+            f"Estado: {self.inscripcion_actual.get('estado', 'PENDIENTE')}\n"
+            f"Total: {self.inscripcion_actual.get('ins_total', 0):,.2f} {self.inscripcion_actual.get('moneda', 'USD')}")
+        
+        # Actualizar el comprobante
+        comprobante = self.generar_comprobante()
         self.label_conf.delete(1.0, tk.END)
         self.label_conf.insert(tk.END, comprobante)
-        
-        messagebox.showinfo("Comprobante", "Comprobante generado\n\n" + comprobante[:300] + "...")
     
     def generar_comprobante(self):
         """Generar comprobante de inscripción"""
@@ -1423,6 +1460,10 @@ País: {rep_data.get('pais_nombre', 'N/A')}
         estado = self.inscripcion_actual.get('estado', self.estado_pago)
         recibo = self.inscripcion_actual.get('recibo', 'N/A')
         entradas = self.inscripcion_actual.get('entradas_generadas', 0)
+        moneda = self.inscripcion_actual.get('moneda', 'USD')
+        simbolo = "€" if moneda == "EUR" else "$"
+        precio_unitario = self.inscripcion_actual.get('precio_unitario', 0)
+        precio_unitario_dkk = self.tour_seleccionado['costo_unitario'] if self.tour_seleccionado else 0
         
         comprobante = f"""
 ╔════════════════════════════════════════════════════════════════╗
@@ -1448,7 +1489,7 @@ TOUR CONTRATADO:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
 Fecha de Salida: {self.tour_seleccionado['fecha'] if self.tour_seleccionado else 'N/A'}
-Costo Unitario: ${self.tour_seleccionado['costo_unitario']:.2f} USD
+Costo Unitario: {precio_unitario_dkk:.2f} DKK ({simbolo}{precio_unitario:.2f} {moneda})
 Total Participantes: {len(self.participantes_agregados)}
 
 PARTICIPANTES:
@@ -1481,9 +1522,10 @@ PARTICIPANTES:
 CÁLCULO DE COSTO:
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 
-${self.tour_seleccionado['costo_unitario']:.2f} × {len(self.participantes_agregados)} participantes = ${ins_total:,.2f}
+{precio_unitario_dkk:.2f} DKK × {len(self.participantes_agregados)} participantes = {precio_unitario_dkk * len(self.participantes_agregados):,.2f} DKK
+({simbolo}{precio_unitario:.2f} {moneda} × {len(self.participantes_agregados)} = {simbolo}{ins_total:,.2f} {moneda})
 
-TOTAL PAGADO: ${ins_total:,.2f} USD
+TOTAL PAGADO: {simbolo}{ins_total:,.2f} {moneda}
 
 ════════════════════════════════════════════════════════════════
 """
@@ -1507,17 +1549,66 @@ Por favor, procede al pago para confirmar tu inscripción.
         return comprobante
     
     def nueva_inscripcion(self):
-        """Iniciar nueva inscripción"""
+        """Iniciar nueva inscripción - limpiar todo el proceso"""
+        # Limpiar datos de inscripción
         self.tour_seleccionado = None
+        self.fecha_tour_seleccionada = None
         self.participantes_agregados = []
         self.inscripcion_actual = None
+        self.cliente_responsable_id = None
         self.estado_pago = "PENDIENTE"
+        self.participante_consultado = None
+        self.representante_consultado = None
         
+        # Limpiar interfaz de tours
         self.notebook.select(0)  # Volver a tours
-        self.label_tour_info.config(text="Tour: No seleccionado", foreground="red")
-        self.label_part_tour.config(text="No seleccionado", foreground="red")
+        if hasattr(self, 'label_tour_info'):
+            self.label_tour_info.config(text="Tour: No seleccionado", foreground="red")
+        if hasattr(self, 'label_part_tour'):
+            self.label_part_tour.config(text="No seleccionado", foreground="red")
         
-        messagebox.showinfo("Nueva Inscripción", "Iniciando nueva inscripción...")
+        # Limpiar interfaz de participantes
+        if hasattr(self, 'entry_cli_responsable'):
+            self.entry_cli_responsable.delete(0, tk.END)
+        if hasattr(self, 'label_cli_responsable'):
+            self.label_cli_responsable.config(text="No consultado", foreground="red")
+        if hasattr(self, 'entry_participante_id'):
+            self.entry_participante_id.delete(0, tk.END)
+        if hasattr(self, 'text_datos'):
+            self.text_datos.delete(1.0, tk.END)
+        if hasattr(self, 'tree_participantes'):
+            for item in self.tree_participantes.get_children():
+                self.tree_participantes.delete(item)
+        
+        # Limpiar resumen
+        if hasattr(self, 'label_res_tour'):
+            self.label_res_tour.config(text="Tour: No seleccionado", foreground="red")
+        if hasattr(self, 'label_res_part'):
+            self.label_res_part.config(text="0 participante(s)")
+        if hasattr(self, 'label_costo_unitario'):
+            self.label_costo_unitario.config(text="Costo unitario: 0.00 DKK")
+        if hasattr(self, 'label_cantidad_participantes'):
+            self.label_cantidad_participantes.config(text="Participantes: 0")
+        if hasattr(self, 'label_costo_total'):
+            self.label_costo_total.config(text="COSTO TOTAL: 0.00 DKK")
+        
+        # Limpiar pago
+        if hasattr(self, 'label_insc_num'):
+            self.label_insc_num.config(text="Inscripción: No creada")
+        if hasattr(self, 'label_insc_estado'):
+            self.label_insc_estado.config(text="Estado: -")
+        if hasattr(self, 'label_insc_monto'):
+            self.label_insc_monto.config(text="Monto a pagar: $0.00")
+        if hasattr(self, 'entry_cvv'):
+            self.entry_cvv.delete(0, tk.END)
+        if hasattr(self, 'combo_metodo_pago'):
+            self.combo_metodo_pago.set("TARJETA CRÉDITO")
+        
+        # Limpiar confirmación
+        if hasattr(self, 'label_conf'):
+            self.label_conf.delete(1.0, tk.END)
+        
+        messagebox.showinfo("Nueva Inscripción", "Proceso limpiado. Puedes iniciar una nueva inscripción.")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # INICIAR APLICACIÓN

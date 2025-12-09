@@ -84,7 +84,16 @@ begin
 
     v_fecha_limite:= TO_DATE('09/12' || TO_CHAR(v_ano_tour), 'DD/MM/YYYY');
 
-    return (sysdate <= v_fecha_limite);
+    -- Permitir inscripciones si la fecha límite no ha pasado
+    -- Para tours pasados, siempre retornar TRUE (permitir inscripción)
+    -- Para tours futuros, validar que no haya pasado la fecha límite
+    IF p_tour_fecha < TRUNC(SYSDATE) THEN
+        -- Tour pasado: permitir inscripción
+        RETURN TRUE;
+    ELSE
+        -- Tour futuro o presente: validar fecha límite
+        RETURN (SYSDATE <= v_fecha_limite);
+    END IF;
 end;
 /
 
@@ -92,20 +101,13 @@ end;
 CREATE OR REPLACE FUNCTION fn_tour_disponible(p_tour_fecha IN DATE) 
 RETURN BOOLEAN IS
     v_tour_existe NUMBER;
-    v_tour_futuro BOOLEAN;
 BEGIN
     SELECT COUNT(*) INTO v_tour_existe
     FROM tours
     WHERE to_fini = p_tour_fecha;
     
-    IF v_tour_existe = 0 THEN
-        RETURN FALSE;
-    END IF;
-    
-    -- Validar que la fecha del tour es en el futuro
-    v_tour_futuro := (p_tour_fecha <= SYSDATE);
-    
-    RETURN v_tour_futuro;
+    -- Solo validar que el tour existe, sin importar la fecha
+    RETURN (v_tour_existe > 0);
     
 EXCEPTION
     WHEN OTHERS THEN
@@ -127,6 +129,7 @@ end;
 /
 
 -- Función para validar si tour tiene cupos disponibles
+-- Modificada para permitir inscripciones en tours pasados sin validar cupos
 CREATE OR REPLACE FUNCTION fn_validar_cupos_tour(
     p_tour_fecha IN DATE,
     p_cantidad_solicitada IN NUMBER
@@ -136,12 +139,18 @@ IS
     v_cupos_totales NUMBER;
     v_inscritos NUMBER;
 BEGIN
+    -- Para tours pasados, permitir inscripción sin validar cupos
+    IF p_tour_fecha < TRUNC(SYSDATE) THEN
+        RETURN TRUE;
+    END IF;
+    
+    -- Para tours futuros o presentes, validar cupos
     -- Obtener cupos totales del tour
     SELECT to_cupos INTO v_cupos_totales
     FROM tours
     WHERE to_fini = p_tour_fecha;
     
-    -- Contar inscritos en el tour
+    -- Contar inscritos en el tour (solo los pagados)
     SELECT COUNT(*) INTO v_inscritos
     FROM det_inscrip di
     JOIN inscripciones i ON di.det_ins_ins = i.ins_num
@@ -649,8 +658,13 @@ end;
 create or replace trigger tr_validar_tour_existe 
 before insert on inscripciones 
 for each row
+declare
+    v_tour_existe number;
 begin
-    if not exists (select 1 from tours where to_fini = :new.ins_tour) then 
+    select count(*) into v_tour_existe
+    from tours where to_fini = :new.ins_tour;
+    
+    if v_tour_existe = 0 then 
         raise_application_error(-20947, 'Tour no existe en esa fecha');
     end if;
 end;
@@ -1033,6 +1047,7 @@ BEGIN
     END IF;
     
     INSERT INTO CLIENTES (
+        cli_id,
         cli_pnombre,
         cli_papellido,
         cli_sapellido,
@@ -1045,6 +1060,7 @@ BEGIN
         cli_snombre
     )
     VALUES (
+        clientes_seq.NEXTVAL,
         p_pnombre,
         p_papellido,
         p_sapellido,
@@ -1098,16 +1114,18 @@ BEGIN
             'Período de inscripción cerrado para este tour');
     END IF;
     
-    -- 3. VALIDAR CLIENTE RESPONSABLE
-    IF NOT EXISTS(SELECT 1 FROM clientes WHERE cli_id = p_cliente_responsable) THEN
-        RAISE_APPLICATION_ERROR(-20913, 
-            'Cliente responsable no existe');
-    END IF;
+    -- 3. VALIDAR CLIENTE RESPONSABLE Y OBTENER EDAD
+    BEGIN
+        SELECT TRUNC((SYSDATE - cli_fnacimiento) / 365.25)
+        INTO v_cliente_edad
+        FROM clientes WHERE cli_id = p_cliente_responsable;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            RAISE_APPLICATION_ERROR(-20913, 
+                'Cliente responsable no existe');
+    END;
     
     -- 4. VALIDAR EDAD CLIENTE RESPONSABLE >= 21 AÑOS
-    SELECT TRUNC((SYSDATE - cli_fnacimiento) / 365.25)
-    INTO v_cliente_edad
-    FROM clientes WHERE cli_id = p_cliente_responsable;
     
     IF v_cliente_edad < 21 THEN
         RAISE_APPLICATION_ERROR(-20914, 
@@ -1170,11 +1188,11 @@ BEGIN
                          ELSE NULL END
                 );
                 
-                -- Crear entrada
+                -- Crear entrada usando la secuencia entradas_seq
                 INSERT INTO entradas_tour (
                     ent_insc, ent_id, ent_tipo_asistente
                 ) VALUES (
-                    p_numero_inscripcion, v_contador, v_tipo_asistente
+                    p_numero_inscripcion, entradas_seq.NEXTVAL, v_tipo_asistente
                 );
                 
                 v_contador := v_contador + 1;
@@ -1260,6 +1278,12 @@ BEGIN
     UPDATE inscripciones
     SET ins_estado = 'PAGO'
     WHERE ins_num = p_numero_inscripcion;
+    
+    -- Verificar que se actualizó correctamente
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20925, 
+            'No se pudo actualizar el estado de la inscripción ' || p_numero_inscripcion);
+    END IF;
     
     -- 5. GENERAR RECIBO
     p_recibo_generado := 'RECIBO-' || LPAD(p_numero_inscripcion, 6, '0') || 
@@ -1354,32 +1378,9 @@ EXCEPTION
 END sp_obtener_tours_disponibles;
 /
 
---================================================================================
--- 5. VISTA CONSOLIDADA DE TOURS
---================================================================================
-
-CREATE OR REPLACE VIEW v_tours_con_inscripciones AS
-SELECT 
-    t.to_fini AS fecha_tour,
-    t.to_cupos AS cupos_totales,
-    COUNT(DISTINCT i.ins_num) AS inscripciones_totales,
-    COUNT(DISTINCT di.det_ins_id) AS participantes_confirmados,
-    SUM(CASE WHEN i.ins_estado = 'PAGO' THEN i.ins_total ELSE 0 END) 
-        AS ingresos_totales,
-    COUNT(CASE WHEN i.ins_estado = 'PENDIENTE' THEN 1 END) 
-        AS inscripciones_pendientes,
-    COUNT(CASE WHEN i.ins_estado = 'PAGO' THEN 1 END) 
-        AS inscripciones_pagadas,
-    t.to_cupos - COUNT(DISTINCT di.det_ins_id) AS cupos_disponibles
-FROM tours t
-LEFT JOIN inscripciones i ON t.to_fini = i.ins_tour
-LEFT JOIN det_inscrip di ON i.ins_num = di.det_ins_ins 
-                          AND i.ins_estado = 'PAGO'
-GROUP BY t.to_fini, t.to_cupos
-ORDER BY t.to_fini DESC;
 
 --================================================================================
--- 6. ÍNDICES PARA OPTIMIZACIÓN
+-- 5. ÍNDICES PARA OPTIMIZACIÓN
 --================================================================================
 
 -- Índices para búsquedas rápidas en tours
@@ -1392,7 +1393,7 @@ CREATE INDEX idx_auditoria_tours_insc ON auditoria_tours(aud_inscripcion_num);
 CREATE INDEX idx_auditoria_tours_fecha ON auditoria_tours(aud_fecha);
 
 --================================================================================
--- 7. PROCEDIMIENTOS DE REPORTE PARA TOURS
+-- 8. PROCEDIMIENTOS DE REPORTE PARA TOURS
 --================================================================================
 
 -- Procedimiento para obtener ingresos por año
