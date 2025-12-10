@@ -4,6 +4,7 @@ from datetime import datetime
 import os
 from dotenv import load_dotenv
 import logging
+import re
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN
@@ -687,6 +688,23 @@ def registrar_cliente():
     try:
         data = request.get_json(force=True)
         
+        # Validar que los nombres solo contengan letras
+        campos_nombre = [
+            ("p_pnombre", data.get("p_pnombre"), "Primer Nombre"),
+            ("p_snombre", data.get("p_snombre"), "Segundo Nombre"),
+            ("p_papellido", data.get("p_papellido"), "Primer Apellido"),
+            ("p_sapellido", data.get("p_sapellido"), "Segundo Apellido")
+        ]
+        
+        for campo_key, valor, nombre_campo in campos_nombre:
+            if valor:
+                # Permitir letras (incluyendo acentos), espacios, guiones y apóstrofes
+                patron = re.compile(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\']+$')
+                if not patron.match(valor.strip()):
+                    return jsonify({
+                        "error": f"El campo '{nombre_campo}' solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números ni caracteres especiales."
+                    }), 400
+        
         conn = db_pool.get_connection()
         cur = conn.cursor()
         
@@ -777,68 +795,89 @@ def registrar_fan_lego():
     try:
         data = request.get_json(force=True)
         
+        # Validar que los nombres solo contengan letras
+        import re
+        campos_nombre = [
+            ("fl_pnombre", data.get("fl_pnombre"), "Primer Nombre"),
+            ("fl_snombre", data.get("fl_snombre"), "Segundo Nombre"),
+            ("fl_papellido", data.get("fl_papellido"), "Primer Apellido"),
+            ("fl_sapellido", data.get("fl_sapellido"), "Segundo Apellido")
+        ]
+        
+        for campo_key, valor, nombre_campo in campos_nombre:
+            if valor:
+                # Permitir letras (incluyendo acentos), espacios, guiones y apóstrofes
+                patron = re.compile(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\']+$')
+                if not patron.match(valor.strip()):
+                    return jsonify({
+                        "error": f"El campo '{nombre_campo}' solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números ni caracteres especiales."
+                    }), 400
+        
         conn = db_pool.get_connection()
         cur = conn.cursor()
         
-        # Obtener siguiente ID de la secuencia
-        cur.execute("SELECT f_lego_seq.NEXTVAL FROM dual")
-        fl_id = int(cur.fetchone()[0])
+        # Usar procedimiento almacenado con validaciones
+        o_fl_id = cur.var(oracledb.NUMBER)
+        o_msg = cur.var(oracledb.STRING)
         
-        # Insertar fan LEGO
-        sql = """
-            INSERT INTO f_lego (
-                fl_id,
-                fl_pnombre,
-                fl_papellido,
-                fl_sapellido,
-                fl_dni,
-                fl_fnacimiento,
-                fl_nac,
-                fl_numpas,
-                fl_fvenpas,
-                fl_snombre,
-                fl_repre
-            ) VALUES (
-                :fl_id,
-                :fl_pnombre,
-                :fl_papellido,
-                :fl_sapellido,
-                :fl_dni,
-                TO_DATE(:fl_fnacimiento, 'YYYY-MM-DD'),
-                :fl_nac,
-                :fl_numpas,
-                CASE WHEN :fl_fvenpas IS NOT NULL THEN TO_DATE(:fl_fvenpas, 'YYYY-MM-DD') ELSE NULL END,
-                :fl_snombre,
-                :fl_repre
-            )
+        plsql = """
+        BEGIN
+            sp_registrar_fan_lego(
+                p_pnombre     => :p_pnombre,
+                p_papellido   => :p_papellido,
+                p_sapellido   => :p_sapellido,
+                p_dni         => :p_dni,
+                p_fnacimiento => TO_DATE(:p_fnacimiento, 'YYYY-MM-DD'),
+                p_nac         => :p_nac,
+                p_numpas      => :p_numpas,
+                p_fvenpas     => CASE WHEN :p_fvenpas IS NOT NULL THEN TO_DATE(:p_fvenpas, 'YYYY-MM-DD') ELSE NULL END,
+                p_snombre     => :p_snombre,
+                p_repre       => :p_repre,
+                p_fl_id       => :o_fl_id,
+                p_mensaje     => :o_msg
+            );
+        END;
         """
         
         cur.execute(
-            sql,
+            plsql,
             {
-                "fl_id": fl_id,
-                "fl_pnombre": data.get("fl_pnombre").upper(),
-                "fl_papellido": data.get("fl_papellido").upper(),
-                "fl_sapellido": data.get("fl_sapellido").upper(),
-                "fl_dni": int(data.get("fl_dni")),
-                "fl_fnacimiento": data.get("fl_fnacimiento"),
-                "fl_nac": int(data.get("fl_nac")),
-                "fl_numpas": data.get("fl_numpas") if data.get("fl_numpas") else None,
-                "fl_fvenpas": data.get("fl_fvenpas") if data.get("fl_fvenpas") else None,
-                "fl_snombre": data.get("fl_snombre").upper() if data.get("fl_snombre").upper() else None,
-                "fl_repre": int(data.get("fl_repre")) if data.get("fl_repre") else None
+                "p_pnombre": data.get("fl_pnombre").upper() if data.get("fl_pnombre") else None,
+                "p_papellido": data.get("fl_papellido").upper() if data.get("fl_papellido") else None,
+                "p_sapellido": data.get("fl_sapellido").upper() if data.get("fl_sapellido") else None,
+                "p_dni": int(data.get("fl_dni")) if data.get("fl_dni") else None,
+                "p_fnacimiento": data.get("fl_fnacimiento"),
+                "p_nac": int(data.get("fl_nac")) if data.get("fl_nac") else None,
+                "p_numpas": data.get("fl_numpas") if data.get("fl_numpas") else None,
+                "p_fvenpas": data.get("fl_fvenpas") if data.get("fl_fvenpas") else None,
+                "p_snombre": data.get("fl_snombre").upper() if data.get("fl_snombre") else None,
+                "p_repre": int(data.get("fl_repre")) if data.get("fl_repre") else None,
+                "o_fl_id": o_fl_id,
+                "o_msg": o_msg
             }
         )
         
         conn.commit()
+        
+        # Obtener valores de los parámetros OUT
+        fl_id_raw = o_fl_id.getvalue()
+        msg_raw = o_msg.getvalue()
+        
+        fl_id = fl_id_raw[0] if isinstance(fl_id_raw, (list, tuple)) else fl_id_raw
+        msg = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
         cur.close()
         conn.close()
+        
+        if fl_id is None or "Error" in msg:
+            log_event("ERROR", f"Error registrando fan LEGO: {msg}")
+            return jsonify({"error": msg}), 400
         
         log_event("SUCCESS", f"Fan LEGO registrado: ID {fl_id}")
         return jsonify({
             "success": True,
-            "fl_id": fl_id,
-            "mensaje": f"Fan LEGO registrado exitosamente con ID: {fl_id}"
+            "fl_id": int(fl_id),
+            "mensaje": msg
         }), 201
         
     except oracledb.DatabaseError as e:
@@ -940,7 +979,8 @@ def confirmar_pago():
             }
         )
         
-        conn.commit()
+        # NO hacer commit aquí - el procedimiento ya hace COMMIT internamente
+        # conn.commit()  # Comentado porque el procedimiento ya hace COMMIT
         
         # Obtener valores de los parámetros OUT
         recibo_raw = o_recibo.getvalue()
@@ -951,6 +991,29 @@ def confirmar_pago():
         recibo_val = recibo_raw[0] if isinstance(recibo_raw, (list, tuple)) else recibo_raw
         entradas_val = entradas_raw[0] if isinstance(entradas_raw, (list, tuple)) else entradas_raw
         msg_val = msg_raw[0] if isinstance(msg_raw, (list, tuple)) else (msg_raw or "")
+        
+        # Verificar si hubo un error en el procedimiento
+        if msg_val and "Error" in msg_val:
+            cur.close()
+            conn.close()
+            log_event("ERROR", f"Error en procedimiento: {msg_val}")
+            return jsonify({"error": msg_val}), 400
+        
+        # Verificar que el estado se actualizó correctamente
+        cur.execute("""
+            SELECT ins_estado FROM inscripciones WHERE ins_num = :ins_num
+        """, {"ins_num": int(inscripcion_num)})
+        estado_row = cur.fetchone()
+        estado_actual = estado_row[0] if estado_row else None
+        
+        if estado_actual != 'PAGO':
+            log_event("ERROR", f"Estado no actualizado. Estado actual: {estado_actual}, esperado: PAGO")
+            cur.close()
+            conn.close()
+            return jsonify({
+                "error": f"El estado no se actualizó correctamente. Estado actual: {estado_actual}",
+                "detalle": msg_val
+            }), 500
         
         # Si el número de entradas es 0 o None, verificar directamente en la BD
         if not entradas_val or entradas_val == 0:
@@ -966,7 +1029,7 @@ def confirmar_pago():
         cur.close()
         conn.close()
         
-        log_event("SUCCESS", f"Pago confirmado - Inscripción: {inscripcion_num}, Entradas: {entradas_val}, Recibo: {recibo_val}")
+        log_event("SUCCESS", f"Pago confirmado - Inscripción: {inscripcion_num}, Estado: {estado_actual}, Entradas: {entradas_val}, Recibo: {recibo_val}")
         
         return jsonify({
             "inscripcion_num": int(inscripcion_num),

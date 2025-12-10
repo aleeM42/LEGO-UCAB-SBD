@@ -14,6 +14,7 @@ import requests
 import json
 from datetime import datetime, timedelta
 import threading
+import re
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # CONFIGURACIÓN
@@ -21,6 +22,27 @@ import threading
 
 API_BASE_URL = "http://127.0.0.1:5000"
 API_TIMEOUT = 15
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# FUNCIONES DE VALIDACIÓN
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def validar_solo_letras(texto, campo_nombre):
+    """
+    Valida que un texto contenga solo letras (incluyendo acentos y espacios).
+    Retorna (es_valido, mensaje_error)
+    """
+    if not texto or texto.strip() == "":
+        return True, None  # Los campos opcionales pueden estar vacíos
+    
+    # Permitir letras (incluyendo acentos), espacios, guiones y apóstrofes
+    # Patrón: solo letras, espacios, guiones y apóstrofes
+    patron = re.compile(r'^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\']+$')
+    
+    if not patron.match(texto.strip()):
+        return False, f"El campo '{campo_nombre}' solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números ni caracteres especiales."
+    
+    return True, None
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # FUNCIONES DE LOGGING
@@ -142,7 +164,7 @@ class FrontendLegoTours:
     def crear_pestaña_tours(self):
         """Pestaña 1: Seleccionar Tour y Fecha"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="1️⃣ Tours Disponibles")
+        self.notebook.add(frame, text="1️ Tours Disponibles")
         
         # Título
         ttk.Label(frame, text="🎫 Tours Disponibles", font=("Arial", 16, "bold")).pack(pady=15)
@@ -296,7 +318,7 @@ class FrontendLegoTours:
     def crear_pestaña_registro(self):
         """Pestaña 2: Registrar Cliente o Fan LEGO"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="2️⃣ Registrar")
+        self.notebook.add(frame, text="2️ Registrar")
         
         # Título
         ttk.Label(frame, text="📝 Registrar Cliente o Fan LEGO", font=("Arial", 16, "bold")).pack(pady=15)
@@ -530,6 +552,19 @@ class FrontendLegoTours:
                 messagebox.showwarning("Error", "Completa todos los campos obligatorios (*)")
                 return
             
+            # Validar que los nombres solo contengan letras
+            validaciones = [
+                validar_solo_letras(p_pnombre, "Primer Nombre"),
+                validar_solo_letras(p_snombre, "Segundo Nombre") if p_snombre else (True, None),
+                validar_solo_letras(p_papellido, "Primer Apellido"),
+                validar_solo_letras(p_sapellido, "Segundo Apellido")
+            ]
+            
+            for es_valido, mensaje in validaciones:
+                if not es_valido:
+                    messagebox.showerror("Error de Validación", mensaje)
+                    return
+            
             payload = {
                 "p_pnombre": p_pnombre,
                 "p_papellido": p_papellido,
@@ -600,6 +635,19 @@ class FrontendLegoTours:
             if not all([fl_pnombre, fl_papellido, fl_sapellido, fl_dni, fl_fnacimiento]):
                 messagebox.showwarning("Error", "Completa todos los campos obligatorios (*)")
                 return
+            
+            # Validar que los nombres solo contengan letras
+            validaciones = [
+                validar_solo_letras(fl_pnombre, "Primer Nombre"),
+                validar_solo_letras(fl_snombre, "Segundo Nombre") if fl_snombre else (True, None),
+                validar_solo_letras(fl_papellido, "Primer Apellido"),
+                validar_solo_letras(fl_sapellido, "Segundo Apellido")
+            ]
+            
+            for es_valido, mensaje in validaciones:
+                if not es_valido:
+                    messagebox.showerror("Error de Validación", mensaje)
+                    return
             
             payload = {
                 "fl_pnombre": fl_pnombre,
@@ -674,7 +722,7 @@ class FrontendLegoTours:
     def crear_pestaña_participantes(self):
         """Pestaña 2: Agregar Participantes"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="3️⃣ Participantes")
+        self.notebook.add(frame, text="3 Participantes")
         
         # Título
         ttk.Label(frame, text="👥 Agregar Participantes", font=("Arial", 16, "bold")).pack(pady=15)
@@ -1062,7 +1110,7 @@ País: {rep_data.get('pais_nombre', 'N/A')}
     def crear_pestaña_resumen(self):
         """Pestaña 3: Resumen e Inscripción"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="4️⃣ Resumen")
+        self.notebook.add(frame, text="4️ Resumen")
         
         # Título
         ttk.Label(frame, text="📋 Resumen de Inscripción", font=("Arial", 16, "bold")).pack(pady=15)
@@ -1211,7 +1259,7 @@ País: {rep_data.get('pais_nombre', 'N/A')}
     def crear_pestaña_pago(self):
         """Pestaña 4: Pago"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="5️⃣ Pago")
+        self.notebook.add(frame, text="5️ Pago")
         
         # Título
         ttk.Label(frame, text="💳 Procesar Pago", font=("Arial", 16, "bold")).pack(pady=15)
@@ -1385,7 +1433,7 @@ País: {rep_data.get('pais_nombre', 'N/A')}
     def crear_pestaña_confirmacion(self):
         """Pestaña 5: Confirmación Final"""
         frame = ttk.Frame(self.notebook)
-        self.notebook.add(frame, text="6️⃣ Confirmación")
+        self.notebook.add(frame, text="6 Confirmación")
         
         # Título
         ttk.Label(frame, text="✅ Confirmación de Inscripción", font=("Arial", 16, "bold")).pack(pady=15)
@@ -1540,7 +1588,7 @@ TOTAL PAGADO: {simbolo}{ins_total:,.2f} {moneda}
             comprobante += f"""
 ✓ INSCRIPCIÓN CONFIRMADA Y PAGADA
 ✓ ENTRADAS GENERADAS: {entradas}
-📅 Fecha de viaje: {self.tour_seleccionado['fecha'] if self.tour_seleccionado else 'N/A'}
+📅 Fecha del tour: {self.tour_seleccionado['fecha'] if self.tour_seleccionado else 'N/A'}
 
 Gracias por tu confianza. ¡Que disfrutes el tour!
 """
@@ -1585,6 +1633,9 @@ Por favor, procede al pago para confirmar tu inscripción.
         if hasattr(self, 'tree_participantes'):
             for item in self.tree_participantes.get_children():
                 self.tree_participantes.delete(item)
+        if hasattr(self, 'part_tree'):
+            for item in self.part_tree.get_children():
+                self.part_tree.delete(item)
         
         # Limpiar resumen
         if hasattr(self, 'label_res_tour'):
@@ -1648,7 +1699,7 @@ Por favor, procede al pago para confirmar tu inscripción.
         canvas.configure(yscrollcommand=scrollbar.set)
         
         # Paso 1: Seleccionar Tienda
-        paso1_frame = ttk.LabelFrame(scrollable_frame, text="1️⃣ Seleccionar Tienda y Cliente")
+        paso1_frame = ttk.LabelFrame(scrollable_frame, text="1️ Seleccionar Tienda y Cliente")
         paso1_frame.pack(fill=tk.X, padx=20, pady=10)
         
         ttk.Label(paso1_frame, text="Tienda:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
@@ -1671,7 +1722,7 @@ Por favor, procede al pago para confirmar tu inscripción.
         self.label_horarios.grid(row=3, column=0, columnspan=3, padx=5, pady=5, sticky="w")
         
         # Paso 2: Catálogo y Productos
-        paso2_frame = ttk.LabelFrame(scrollable_frame, text="2️⃣ Catálogo de Productos")
+        paso2_frame = ttk.LabelFrame(scrollable_frame, text="2️ Inventario de Productos")
         paso2_frame.pack(fill=tk.BOTH, expand=True, padx=20, pady=10)
         
         # Treeview para productos
@@ -1692,7 +1743,7 @@ Por favor, procede al pago para confirmar tu inscripción.
         scrollbar_tree.pack(side=tk.RIGHT, fill=tk.Y)
         
         # Paso 3: Agregar Productos a Factura
-        paso3_frame = ttk.LabelFrame(scrollable_frame, text="3️⃣ Agregar Productos a Factura")
+        paso3_frame = ttk.LabelFrame(scrollable_frame, text="3 Agregar Productos a Factura")
         paso3_frame.pack(fill=tk.X, padx=20, pady=10)
         
         ttk.Label(paso3_frame, text="Código Producto:").grid(row=0, column=0, padx=5, pady=5, sticky="w")
@@ -1716,7 +1767,7 @@ Por favor, procede al pago para confirmar tu inscripción.
         self.listbox_detalles_fisica.pack(fill=tk.X, pady=5)
         
         # Paso 4: Finalizar Factura
-        paso4_frame = ttk.LabelFrame(scrollable_frame, text="4️⃣ Finalizar Factura")
+        paso4_frame = ttk.LabelFrame(scrollable_frame, text="4 Finalizar Factura")
         paso4_frame.pack(fill=tk.X, padx=20, pady=10)
         
         self.label_total_fisica = ttk.Label(paso4_frame, text="Total: $0.00", font=("Arial", 12, "bold"))

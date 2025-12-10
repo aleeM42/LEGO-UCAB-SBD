@@ -66,12 +66,16 @@ begin
 
     -- Permitir inscripciones si la fecha límite no ha pasado
     -- Para tours pasados, siempre retornar TRUE (permitir inscripción)
-    -- Para tours futuros, validar que no haya pasado la fecha límite
+    -- Para tours futuros o del mismo día, validar que no haya pasado la fecha límite
+    -- Si la fecha del tour es igual o posterior a la fecha límite, permitir inscripciones hasta el día del tour
     IF p_tour_fecha < TRUNC(SYSDATE) THEN
         -- Tour pasado: permitir inscripción
         RETURN TRUE;
+    ELSIF p_tour_fecha >= v_fecha_limite THEN
+        -- Si el tour es en o después de la fecha límite (9/12), permitir inscripciones hasta el día del tour
+        RETURN (SYSDATE <= p_tour_fecha);
     ELSE
-        -- Tour futuro o presente: validar fecha límite
+        -- Tour futuro antes de la fecha límite: validar fecha límite estándar
         RETURN (SYSDATE <= v_fecha_limite);
     END IF;
 end;
@@ -1139,6 +1143,24 @@ BEGIN
         RAISE_APPLICATION_ERROR(-20002, v_error_msg);
     END IF;
 
+    -- Validar que los nombres solo contengan letras (sin números)
+    IF NOT REGEXP_LIKE(p_pnombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF p_snombre IS NOT NULL AND NOT REGEXP_LIKE(p_snombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF NOT REGEXP_LIKE(p_papellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF NOT REGEXP_LIKE(p_sapellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+
+    -- Validar DNI único en clientes
     SELECT COUNT(*)
     INTO v_dni_count
     FROM CLIENTES
@@ -1146,6 +1168,39 @@ BEGIN
 
     IF v_dni_count > 0 THEN
         RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro cliente.');
+    END IF;
+    
+    -- Validar DNI único en fans LEGO
+    SELECT COUNT(*)
+    INTO v_dni_count
+    FROM F_LEGO
+    WHERE fl_dni = p_dni;
+
+    IF v_dni_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para un fan LEGO.');
+    END IF;
+    
+    -- Validar número de pasaporte único (si se proporciona)
+    IF p_numpas IS NOT NULL THEN
+        -- Verificar en clientes
+        SELECT COUNT(*)
+        INTO v_dni_count
+        FROM CLIENTES
+        WHERE cli_numpas = p_numpas AND cli_numpas IS NOT NULL;
+
+        IF v_dni_count > 0 THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para otro cliente.');
+        END IF;
+        
+        -- Verificar en fans LEGO
+        SELECT COUNT(*)
+        INTO v_dni_count
+        FROM F_LEGO
+        WHERE fl_numpas = p_numpas AND fl_numpas IS NOT NULL;
+
+        IF v_dni_count > 0 THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para un fan LEGO.');
+        END IF;
     END IF;
     
     INSERT INTO CLIENTES (
@@ -1182,6 +1237,142 @@ EXCEPTION
         ROLLBACK;
         RAISE_APPLICATION_ERROR(-20001, 'Error en la inserción o integridad de datos: ' || SQLERRM);
 END sp_registrar_cliente_nuevo;
+/
+
+--procedimiento para registrar fan LEGO con validaciones
+CREATE OR REPLACE PROCEDURE sp_registrar_fan_lego (
+    p_pnombre       IN F_LEGO.fl_pnombre%TYPE,
+    p_papellido     IN F_LEGO.fl_papellido%TYPE,
+    p_sapellido     IN F_LEGO.fl_sapellido%TYPE,
+    p_dni           IN F_LEGO.fl_dni%TYPE,
+    p_fnacimiento   IN F_LEGO.fl_fnacimiento%TYPE,
+    p_nac           IN F_LEGO.fl_nac%TYPE,
+    p_numpas        IN F_LEGO.fl_numpas%TYPE DEFAULT NULL,
+    p_fvenpas       IN F_LEGO.fl_fvenpas%TYPE DEFAULT NULL,
+    p_snombre       IN F_LEGO.fl_snombre%TYPE DEFAULT NULL,
+    p_repre         IN F_LEGO.fl_repre%TYPE DEFAULT NULL,
+    p_fl_id         OUT NUMBER,
+    p_mensaje       OUT VARCHAR2
+)
+AS
+    v_error_msg     VARCHAR2(255);
+    v_dni_count     NUMBER;
+    v_fl_id         NUMBER;
+BEGIN
+    -- Validar datos obligatorios
+    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL THEN
+        v_error_msg := 'Error: Faltan datos obligatorios.';
+        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
+        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
+        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
+        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
+        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
+        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad;'; END IF;
+        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
+    END IF;
+
+    -- Validar que los nombres solo contengan letras (sin números)
+    IF NOT REGEXP_LIKE(p_pnombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF p_snombre IS NOT NULL AND NOT REGEXP_LIKE(p_snombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF NOT REGEXP_LIKE(p_papellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+    
+    IF NOT REGEXP_LIKE(p_sapellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
+        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
+    END IF;
+
+    -- Validar DNI único en fans LEGO
+    SELECT COUNT(*)
+    INTO v_dni_count
+    FROM F_LEGO
+    WHERE fl_dni = p_dni;
+
+    IF v_dni_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro fan LEGO.');
+    END IF;
+    
+    -- Validar DNI único en clientes
+    SELECT COUNT(*)
+    INTO v_dni_count
+    FROM CLIENTES
+    WHERE cli_dni = p_dni;
+
+    IF v_dni_count > 0 THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para un cliente.');
+    END IF;
+    
+    -- Validar número de pasaporte único (si se proporciona)
+    IF p_numpas IS NOT NULL THEN
+        -- Verificar en fans LEGO
+        SELECT COUNT(*)
+        INTO v_dni_count
+        FROM F_LEGO
+        WHERE fl_numpas = p_numpas AND fl_numpas IS NOT NULL;
+
+        IF v_dni_count > 0 THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para otro fan LEGO.');
+        END IF;
+        
+        -- Verificar en clientes
+        SELECT COUNT(*)
+        INTO v_dni_count
+        FROM CLIENTES
+        WHERE cli_numpas = p_numpas AND cli_numpas IS NOT NULL;
+
+        IF v_dni_count > 0 THEN
+            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para un cliente.');
+        END IF;
+    END IF;
+    
+    -- Obtener siguiente ID de la secuencia
+    SELECT f_lego_seq.NEXTVAL INTO v_fl_id FROM dual;
+    
+    -- Insertar fan LEGO
+    INSERT INTO F_LEGO (
+        fl_id,
+        fl_pnombre,
+        fl_papellido,
+        fl_sapellido,
+        fl_dni,
+        fl_fnacimiento,
+        fl_nac,
+        fl_numpas,
+        fl_fvenpas,
+        fl_snombre,
+        fl_repre
+    ) VALUES (
+        v_fl_id,
+        p_pnombre,
+        p_papellido,
+        p_sapellido,
+        p_dni,
+        p_fnacimiento,
+        p_nac,
+        p_numpas,
+        p_fvenpas,
+        p_snombre,
+        p_repre
+    );
+    
+    p_fl_id := v_fl_id;
+    p_mensaje := 'Fan LEGO registrado exitosamente con ID: ' || v_fl_id;
+    
+    COMMIT;
+    
+EXCEPTION
+    WHEN OTHERS THEN
+        ROLLBACK;
+        p_fl_id := NULL;
+        p_mensaje := 'Error: ' || SQLERRM;
+        RAISE;
+END sp_registrar_fan_lego;
 /
 
 --procedimiento para crear inscripcion (antes de pago)
@@ -1359,21 +1550,24 @@ BEGIN
     END IF;
     
     -- 3. VALIDAR MONTO PAGADO (con conversión de moneda)
-    -- Conversión aproximada: 1 DKK = 0.134 EUR = 0.145 USD
+    -- El costo en BD está en USD, convertir a la moneda del pago
+    -- Tasas de conversión: 1 USD = 0.88 EUR, 1 USD = 6.57 DKK (3500 USD = 23000 DKK)
     CASE p_moneda_pago
-        WHEN 'DKK' THEN v_factor_conversion := 1;
-        WHEN 'EUR' THEN v_factor_conversion := 7.47;  -- 1 EUR = 7.47 DKK
-        WHEN 'USD' THEN v_factor_conversion := 6.42;  -- 1 USD = 6.42 DKK
-        ELSE RAISE_APPLICATION_ERROR(-20923, 'Moneda no válida');
+        WHEN 'USD' THEN 
+            v_monto_esperado := v_costo_inscripcion;  -- Ya está en USD
+        WHEN 'EUR' THEN 
+            v_monto_esperado := v_costo_inscripcion * 0.8797;  -- 1 USD = 0.8797 EUR (3500 USD = 3081 EUR)
+        WHEN 'DKK' THEN 
+            v_monto_esperado := v_costo_inscripcion * (23000 / 3500);  -- 1 USD = 6.5714 DKK (3500 USD = 23000 DKK)
+        ELSE 
+            RAISE_APPLICATION_ERROR(-20923, 'Moneda no válida: ' || p_moneda_pago);
     END CASE;
-    
-    v_monto_esperado := v_costo_inscripcion / v_factor_conversion;
     
     -- Permitir pequeña variación (1%)
     IF ABS(p_monto_pagado - v_monto_esperado) > (v_monto_esperado * 0.01) THEN
         RAISE_APPLICATION_ERROR(-20924, 
-            'Monto pagado no coincide. Esperado: ' || v_monto_esperado || 
-            ' ' || p_moneda_pago);
+            'Monto pagado no coincide. Esperado: ' || ROUND(v_monto_esperado, 2) || 
+            ' ' || p_moneda_pago || ', Recibido: ' || ROUND(p_monto_pagado, 2));
     END IF;
     
     -- 4. ACTUALIZAR ESTADO A PAGO

@@ -76,6 +76,7 @@ create table productos (
 create sequence clientes_seq start with 1 increment by 1;
 create sequence f_lego_seq start with 1 increment by 1;
 
+
 create table clientes (
     cli_id number(4) primary key,
     cli_pnombre varchar2(30) not null,
