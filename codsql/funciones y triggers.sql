@@ -814,7 +814,7 @@ create or replace trigger no_eliminar_fact_o
 before delete on factura_o
 begin  
     raise_application_error(-20002, 'Las facturas online no pueden eliminarse');
-end;
+end;        
 /
 
 --trigger para no eliminar detalle facturas online
@@ -838,7 +838,7 @@ END;
 --trigger para no eliminar facturas de tienda
 create or replace trigger no_eliminar_fact_t
 before delete on factura_tf
-begin  
+begin
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
 /
@@ -1414,8 +1414,8 @@ BEGIN
         FROM clientes WHERE cli_id = p_cliente_responsable;
     EXCEPTION
         WHEN NO_DATA_FOUND THEN
-            RAISE_APPLICATION_ERROR(-20913, 
-                'Cliente responsable no existe');
+        RAISE_APPLICATION_ERROR(-20913, 
+            'Cliente responsable no existe');
     END;
     
     -- 4. VALIDAR EDAD CLIENTE RESPONSABLE >= 21 AÑOS
@@ -1691,7 +1691,7 @@ IS
     PRAGMA EXCEPTION_INIT(e_producto_no_encontrado, -20001);
 BEGIN
     BEGIN
-        SELECT
+SELECT 
             pro_cod
         INTO
             v_pro_cod
