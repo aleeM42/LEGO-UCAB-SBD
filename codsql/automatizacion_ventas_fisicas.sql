@@ -199,23 +199,26 @@ IS
     v_msg_detalle VARCHAR2(500);
     v_count_ids NUMBER;
     v_count_cantidades NUMBER;
+    v_detalles_insertados NUMBER := 0;
 BEGIN
-    SAVEPOINT sp_venta_inicio;
+    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar_venta_fisica: INICIO');
+    DBMS_OUTPUT.PUT_LINE('DEBUG: tienda=' || p_tienda_id || ', cliente=' || p_cliente_id);
+    DBMS_OUTPUT.PUT_LINE('DEBUG: productos_ids=[' || p_productos_ids || '], cantidades=[' || p_cantidades || ']');
     
     -- Validar que ambos strings tengan la misma cantidad de elementos
     IF p_productos_ids IS NULL OR LENGTH(TRIM(p_productos_ids)) = 0 THEN
-        RAISE_APPLICATION_ERROR(-21010, 'Debe proporcionar al menos un producto.');
+        RAISE_APPLICATION_ERROR(-20910, 'Debe proporcionar al menos un producto.');
     END IF;
     
     IF p_cantidades IS NULL OR LENGTH(TRIM(p_cantidades)) = 0 THEN
-        RAISE_APPLICATION_ERROR(-21011, 'Debe proporcionar las cantidades para cada producto.');
+        RAISE_APPLICATION_ERROR(-20911, 'Debe proporcionar las cantidades para cada producto.');
     END IF;
     
     v_count_ids := REGEXP_COUNT(TRIM(p_productos_ids), '[^,]+');
     v_count_cantidades := REGEXP_COUNT(TRIM(p_cantidades), '[^,]+');
     
     IF v_count_ids != v_count_cantidades THEN
-        RAISE_APPLICATION_ERROR(-21012, 'La cantidad de productos (' || v_count_ids || 
+        RAISE_APPLICATION_ERROR(-20912, 'La cantidad de productos (' || v_count_ids || 
                                 ') no coincide con la cantidad de cantidades (' || v_count_cantidades || ').');
     END IF;
     
@@ -236,6 +239,9 @@ BEGIN
         p_moneda := 'USD';
     END IF;
     
+    -- Establecer SAVEPOINT después de las validaciones iniciales
+    SAVEPOINT sp_venta_inicio;
+    
     -- Iniciar factura
     INICIAR_FACTURA_FISICA(
         p_cli_id => p_cliente_id,
@@ -245,7 +251,7 @@ BEGIN
     );
     
     IF v_fact_num IS NULL THEN
-        RAISE_APPLICATION_ERROR(-21013, 'Error al iniciar factura: ' || p_mensaje);
+        RAISE_APPLICATION_ERROR(-20913, 'Error al iniciar factura: ' || p_mensaje);
     END IF;
     
     p_factura_num := v_fact_num;
@@ -254,7 +260,11 @@ BEGIN
     v_string_restante_ids := TRIM(p_productos_ids);
     v_string_restante_cantidades := TRIM(p_cantidades);
     
+    DBMS_OUTPUT.PUT_LINE('DEBUG: Iniciando loop de productos. IDs restantes: [' || v_string_restante_ids || '], Cantidades restantes: [' || v_string_restante_cantidades || ']');
+    
     WHILE v_string_restante_ids IS NOT NULL AND LENGTH(v_string_restante_ids) > 0 LOOP
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Iteración del loop - IDs restantes: [' || v_string_restante_ids || '], Cantidades restantes: [' || v_string_restante_cantidades || ']');
+        
         -- Extraer ID de producto
         v_pos_comma := INSTR(v_string_restante_ids, ',');
         IF v_pos_comma > 0 THEN
@@ -275,17 +285,35 @@ BEGIN
             v_string_restante_cantidades := NULL;
         END IF;
         
-        IF v_prod_id_str IS NOT NULL AND v_prod_id_str != '' AND 
-           v_cantidad_str IS NOT NULL AND v_cantidad_str != '' THEN
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Extraídos - prod_id_str=[' || v_prod_id_str || '], cantidad_str=[' || v_cantidad_str || ']');
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Longitud prod_id_str=' || NVL(LENGTH(v_prod_id_str), 0) || ', cantidad_str=' || NVL(LENGTH(v_cantidad_str), 0));
+        DBMS_OUTPUT.PUT_LINE('DEBUG: prod_id_str IS NULL? ' || CASE WHEN v_prod_id_str IS NULL THEN 'SI' ELSE 'NO' END);
+        DBMS_OUTPUT.PUT_LINE('DEBUG: cantidad_str IS NULL? ' || CASE WHEN v_cantidad_str IS NULL THEN 'SI' ELSE 'NO' END);
+        DBMS_OUTPUT.PUT_LINE('DEBUG: prod_id_str != ''''? ' || CASE WHEN v_prod_id_str != '' THEN 'SI' ELSE 'NO' END);
+        DBMS_OUTPUT.PUT_LINE('DEBUG: cantidad_str != ''''? ' || CASE WHEN v_cantidad_str != '' THEN 'SI' ELSE 'NO' END);
+        
+        -- Limpiar espacios en blanco adicionales
+        v_prod_id_str := TRIM(v_prod_id_str);
+        v_cantidad_str := TRIM(v_cantidad_str);
+        
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Después de TRIM - prod_id_str=[' || v_prod_id_str || '], cantidad_str=[' || v_cantidad_str || ']');
+        
+        IF v_prod_id_str IS NOT NULL AND LENGTH(v_prod_id_str) > 0 AND 
+           v_cantidad_str IS NOT NULL AND LENGTH(v_cantidad_str) > 0 THEN
+            DBMS_OUTPUT.PUT_LINE('DEBUG: Strings válidos, convirtiendo a números...');
             BEGIN
                 v_prod_id := TO_NUMBER(v_prod_id_str);
                 v_cantidad := TO_NUMBER(v_cantidad_str);
                 
+                DBMS_OUTPUT.PUT_LINE('DEBUG: Conversión exitosa - prod_id=' || v_prod_id || ', cantidad=' || v_cantidad);
+                
                 IF v_cantidad <= 0 THEN
-                    RAISE_APPLICATION_ERROR(-21014, 'La cantidad debe ser mayor a 0. Producto: ' || v_prod_id);
+                    RAISE_APPLICATION_ERROR(-20914, 'La cantidad debe ser mayor a 0. Producto: ' || v_prod_id);
                 END IF;
                 
                 -- Insertar detalle
+                -- IMPORTANTE: No usar bloque BEGIN/EXCEPTION aquí para que cualquier error se propague directamente
+                DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Llamando INSERTAR_DETALLE_FISICA para producto ' || v_prod_id || ', cantidad ' || v_cantidad);
                 INSERTAR_DETALLE_FISICA(
                     p_ti_id => p_tienda_id,
                     p_fact_num => v_fact_num,
@@ -294,33 +322,110 @@ BEGIN
                     p_msg => v_msg_detalle
                 );
                 
-                IF v_msg_detalle NOT LIKE 'Exito%' THEN
-                    RAISE_APPLICATION_ERROR(-21015, 'Error agregando producto ' || v_prod_id || ': ' || v_msg_detalle);
+                DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: INSERTAR_DETALLE_FISICA retornó: [' || v_msg_detalle || ']');
+                
+                -- Verificar el mensaje de retorno
+                IF v_msg_detalle IS NULL OR v_msg_detalle NOT LIKE 'Exito%' THEN
+                    DBMS_OUTPUT.PUT_LINE('DEBUG: Mensaje no es éxito. Mensaje: [' || NVL(v_msg_detalle, 'NULL') || ']');
+                    RAISE_APPLICATION_ERROR(-20915, 'Error agregando producto ' || v_prod_id || ': ' || NVL(v_msg_detalle, 'Mensaje NULL'));
                 END IF;
+                
+                -- Verificar que el detalle se insertó correctamente en la tabla
+                DECLARE
+                    v_detalle_count NUMBER;
+                BEGIN
+                    SELECT COUNT(*)
+                    INTO v_detalle_count
+                    FROM det_fact_t
+                    WHERE det_ft_fact = v_fact_num
+                      AND det_ft_tienda_fact = p_tienda_id
+                      AND det_ft_prod = v_prod_id;
+                    
+                    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Detalles encontrados para producto ' || v_prod_id || ': ' || v_detalle_count);
+                    
+                    IF v_detalle_count = 0 THEN
+                        RAISE_APPLICATION_ERROR(-20917, 'Error: El detalle del producto ' || v_prod_id || 
+                            ' no se insertó correctamente en la tabla. Factura: ' || v_fact_num || 
+                            ', Tienda: ' || p_tienda_id);
+                    ELSE
+                        v_detalles_insertados := v_detalles_insertados + 1;
+                        DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Detalle insertado correctamente. Total detalles: ' || v_detalles_insertados);
+                    END IF;
+                END;
                 
             EXCEPTION
                 WHEN VALUE_ERROR THEN
-                    RAISE_APPLICATION_ERROR(-21016, 'Error: ID o cantidad inválido. Producto: [' || v_prod_id_str || 
+                    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: VALUE_ERROR capturado');
+                    RAISE_APPLICATION_ERROR(-20916, 'Error: ID o cantidad inválido. Producto: [' || v_prod_id_str || 
                                     '], Cantidad: [' || v_cantidad_str || ']');
+                WHEN OTHERS THEN
+                    -- Propagar cualquier otro error con información de debugging
+                    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: EXCEPTION OTHERS capturado: ' || SQLERRM || ' (Código: ' || SQLCODE || ')');
+                    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Producto=' || v_prod_id || ', Factura=' || v_fact_num || ', Tienda=' || p_tienda_id);
+                    RAISE;
             END;
+        ELSE
+            DBMS_OUTPUT.PUT_LINE('DEBUG: Strings NO válidos - saltando esta iteración');
+            DBMS_OUTPUT.PUT_LINE('DEBUG: prod_id_str IS NULL? ' || CASE WHEN v_prod_id_str IS NULL THEN 'SI' ELSE 'NO' END);
+            DBMS_OUTPUT.PUT_LINE('DEBUG: cantidad_str IS NULL? ' || CASE WHEN v_cantidad_str IS NULL THEN 'SI' ELSE 'NO' END);
+            DBMS_OUTPUT.PUT_LINE('DEBUG: LENGTH(prod_id_str) > 0? ' || CASE WHEN LENGTH(v_prod_id_str) > 0 THEN 'SI' ELSE 'NO' END);
+            DBMS_OUTPUT.PUT_LINE('DEBUG: LENGTH(cantidad_str) > 0? ' || CASE WHEN LENGTH(v_cantidad_str) > 0 THEN 'SI' ELSE 'NO' END);
         END IF;
     END LOOP;
     
-    -- Finalizar factura
+    -- Verificar que se insertó al menos un detalle antes de finalizar
+    DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Total detalles insertados en el loop: ' || v_detalles_insertados);
+    
+    IF v_detalles_insertados = 0 THEN
+        RAISE_APPLICATION_ERROR(-20918, 'Error: No se insertó ningún detalle en la factura. Verificar que los productos y cantidades sean válidos.');
+    END IF;
+    
+    -- Verificar una vez más que hay detalles en la tabla antes de finalizar
+    DECLARE
+        v_total_detalles NUMBER;
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_total_detalles
+        FROM det_fact_t
+        WHERE det_ft_fact = v_fact_num
+          AND det_ft_tienda_fact = p_tienda_id;
+        
+        DBMS_OUTPUT.PUT_LINE('DEBUG sp_automatizar: Total detalles en tabla antes de finalizar: ' || v_total_detalles);
+        
+        IF v_total_detalles = 0 THEN
+            RAISE_APPLICATION_ERROR(-20919, 'Error: No hay detalles en la tabla det_fact_t para la factura ' || v_fact_num || 
+                ' en la tienda ' || p_tienda_id || '. El INSERT falló silenciosamente.');
+        END IF;
+    END;
+    
+    -- Finalizar factura (esto ya calcula y actualiza el total)
     FINALIZAR_FACTURA_FISICA(
         p_ti_id => p_tienda_id,
         p_fact_num => v_fact_num,
         p_msg => p_mensaje
     );
     
-    -- Obtener total final
+    -- Obtener el total que ya fue calculado y actualizado por FINALIZAR_FACTURA_FISICA
     SELECT fact_tf_total
     INTO v_total_calculado
     FROM factura_tf
     WHERE fact_tf_num = v_fact_num
       AND fact_tf_tie = p_tienda_id;
     
-    p_total_usd := v_total_calculado;
+    -- Si el total es 0, intentar recalcular usando la función
+    IF v_total_calculado IS NULL OR v_total_calculado = 0 THEN
+        v_total_calculado := fn_calcular_total_factura_fisica(v_fact_num, p_tienda_id);
+        
+        -- Actualizar el total en la factura si se calculó correctamente
+        IF v_total_calculado > 0 THEN
+            UPDATE factura_tf
+            SET fact_tf_total = v_total_calculado
+            WHERE fact_tf_num = v_fact_num
+              AND fact_tf_tie = p_tienda_id;
+        END IF;
+    END IF;
+    
+    p_total_usd := NVL(v_total_calculado, 0);
     
     -- Convertir total según moneda
     IF p_moneda = 'EUR' THEN
@@ -336,7 +441,14 @@ BEGIN
     
 EXCEPTION
     WHEN OTHERS THEN
-        ROLLBACK TO sp_venta_inicio;
+        -- Intentar hacer ROLLBACK al SAVEPOINT si existe, si no, hacer ROLLBACK completo
+        BEGIN
+            ROLLBACK TO sp_venta_inicio;
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Si el SAVEPOINT no existe, hacer ROLLBACK completo
+                ROLLBACK;
+        END;
         p_factura_num := NULL;
         p_total_usd := 0;
         p_total_mostrar := 0;
@@ -347,10 +459,11 @@ END sp_automatizar_venta_fisica;
 /
 
 -- ═══════════════════════════════════════════════════════════════════════════════
--- PROCEDIMIENTO PARA DESCONTAR INVENTARIO-LOTES POR DÍA/TIENDA/FACTURA
+-- PROCEDIMIENTO PARA DESCONTAR INVENTARIO-LOTES POR DÍA/TIENDA
 -- ═══════════════════════════════════════════════════════════════════════════════
 -- Este procedimiento procesa todas las facturas de un día específico para una tienda
--- y descuenta el inventario de los lotes según los descuentos registrados
+-- y ACTUALIZA el stock de los lotes descontando las cantidades vendidas
+-- IMPORTANTE: Este procedimiento debe ejecutarse después de que todas las ventas del día estén completas
 CREATE OR REPLACE PROCEDURE sp_descontar_inventario_lotes(
     p_tienda_id IN NUMBER,
     p_fecha IN DATE,
@@ -361,11 +474,12 @@ IS
     v_factura_num NUMBER;
     v_lote_id NUMBER;
     v_prod_id NUMBER;
-    v_cantidad_descontar NUMBER;
+    v_cantidad_vendida NUMBER;
     v_stock_actual NUMBER;
     v_stock_descontado NUMBER;
-    v_total_descontado NUMBER;
+    v_stock_disponible NUMBER;
     v_facturas_count NUMBER := 0;
+    v_lotes_actualizados NUMBER := 0;
 BEGIN
     -- Obtener todas las facturas del día para la tienda
     FOR factura_rec IN (
@@ -378,55 +492,64 @@ BEGIN
         v_factura_num := factura_rec.fact_tf_num;
         v_facturas_count := v_facturas_count + 1;
         
-        -- Para cada detalle de la factura, descontar del lote
+        -- Para cada detalle de la factura, descontar del stock del lote
         FOR detalle_rec IN (
             SELECT 
-                dt.det_ft_lote,
-                dt.det_ft_prod,
-                dt.det_ft_cantidad,
-                l.lot_stock,
-                NVL(SUM(d.d_cantidad), 0) AS ya_descontado
+                dt.det_ft_lote AS lote_id,
+                dt.det_ft_prod AS prod_id,
+                dt.det_ft_cantidad AS cantidad,
+                l.lot_stock AS stock_actual_lote
             FROM det_fact_t dt
+            JOIN factura_tf ft ON dt.det_ft_fact = ft.fact_tf_num
             JOIN lotes l ON dt.det_ft_prod = l.lot_prod 
                          AND dt.det_ft_lote = l.lot_id 
-                         AND dt.det_ft_tienda = l.lot_tienda
-            LEFT JOIN descuentos d ON l.lot_id = d.d_lote 
-                                   AND l.lot_prod = d.d_prod 
-                                   AND l.lot_tienda = d.d_tienda
-                                   AND TRUNC(d.d_fecha) = TRUNC(p_fecha)
+                         AND ft.fact_tf_tie = l.lot_tienda
             WHERE dt.det_ft_fact = v_factura_num
-              AND dt.det_ft_tienda_fact = p_tienda_id
-            GROUP BY dt.det_ft_lote, dt.det_ft_prod, dt.det_ft_cantidad, l.lot_stock
+              AND ft.fact_tf_tie = p_tienda_id
         ) LOOP
-            v_lote_id := detalle_rec.det_ft_lote;
-            v_prod_id := detalle_rec.det_ft_prod;
-            v_cantidad_descontar := detalle_rec.det_ft_cantidad;
-            v_stock_actual := detalle_rec.lot_stock;
-            v_stock_descontado := detalle_rec.ya_descontado;
+            v_lote_id := detalle_rec.lote_id;
+            v_prod_id := detalle_rec.prod_id;
+            v_cantidad_vendida := detalle_rec.cantidad;
+            v_stock_actual := detalle_rec.stock_actual_lote;
             
-            -- Calcular stock disponible (stock original - ya descontado)
-            v_total_descontado := v_stock_actual - v_stock_descontado;
-            
-            -- Verificar que hay stock suficiente
-            IF v_total_descontado < v_cantidad_descontar THEN
+            -- Verificar que hay stock suficiente en el lote
+            IF v_stock_actual < v_cantidad_vendida THEN
                 RAISE_APPLICATION_ERROR(-21020, 
                     'Stock insuficiente en lote ' || v_lote_id || 
                     ' para producto ' || v_prod_id || 
-                    '. Disponible: ' || v_total_descontado || 
-                    ', Requerido: ' || v_cantidad_descontar);
+                    '. Stock actual: ' || v_stock_actual || 
+                    ', Cantidad requerida: ' || v_cantidad_vendida);
             END IF;
             
-            -- El descuento ya se registró en INSERTAR_DETALLE_FISICA
-            -- Este procedimiento solo verifica y reporta
+            -- ACTUALIZAR el stock del lote restando la cantidad vendida
+            UPDATE lotes
+            SET lot_stock = lot_stock - v_cantidad_vendida
+            WHERE lot_id = v_lote_id
+              AND lot_prod = v_prod_id
+              AND lot_tienda = p_tienda_id;
+            
+            IF SQL%ROWCOUNT > 0 THEN
+                v_lotes_actualizados := v_lotes_actualizados + 1;
+                DBMS_OUTPUT.PUT_LINE('Lote actualizado: ' || v_lote_id || 
+                                   ' - Producto: ' || v_prod_id || 
+                                   ' - Stock anterior: ' || v_stock_actual || 
+                                   ' - Cantidad descontada: ' || v_cantidad_vendida ||
+                                   ' - Stock nuevo: ' || (v_stock_actual - v_cantidad_vendida));
+            END IF;
         END LOOP;
     END LOOP;
     
     p_facturas_procesadas := v_facturas_count;
-    p_mensaje := 'Proceso completado. Facturas procesadas: ' || v_facturas_count || 
+    p_mensaje := 'Proceso completado exitosamente. ' ||
+                 'Facturas procesadas: ' || v_facturas_count || 
+                 ' | Lotes actualizados: ' || v_lotes_actualizados ||
                  ' | Fecha: ' || TO_CHAR(p_fecha, 'DD/MM/YYYY');
+    
+    COMMIT;
     
 EXCEPTION
     WHEN OTHERS THEN
+        ROLLBACK;
         p_facturas_procesadas := 0;
         p_mensaje := 'Error procesando descuentos: ' || SQLERRM;
         RAISE;

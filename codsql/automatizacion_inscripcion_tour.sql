@@ -269,14 +269,14 @@ BEGIN
     p_costo_total_dkk := ROUND(p_costo_total_usd * (23000 / 3500), 2);  -- 1 USD = 6.5714 DKK
     
     -- ═══════════════════════════════════════════════════════════════════════════
-    -- PASO 7: CREAR INSCRIPCIÓN (ESTADO: PENDIENTE PAGO)
+    -- PASO 7: CREAR INSCRIPCIÓN (ESTADO: PAGO)
     -- ═══════════════════════════════════════════════════════════════════════════
     SELECT inscripciones_seq.NEXTVAL INTO p_numero_inscripcion FROM dual;
     
     INSERT INTO inscripciones (
         ins_num, ins_femision, ins_total, ins_estado, ins_tour
     ) VALUES (
-        p_numero_inscripcion, SYSDATE, p_costo_total_usd, 'PENDIENTE', p_tour_fecha
+        p_numero_inscripcion, SYSDATE, p_costo_total_usd, 'PAGO', p_tour_fecha
     );
     
     v_inscripcion_creada := TRUE;

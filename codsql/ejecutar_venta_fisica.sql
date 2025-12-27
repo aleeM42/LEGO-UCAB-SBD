@@ -151,7 +151,7 @@ DECLARE
     v_pro_cod NUMBER;
     v_pro_nom VARCHAR2(50);
     v_pro_desc VARCHAR2(800);
-    v_pro_raned NUMBER;
+    v_pro_raned VARCHAR2(8);
     v_pro_ranpr VARCHAR2(4);
     v_precio_usd NUMBER;
     v_precio_mostrar NUMBER;
@@ -167,6 +167,7 @@ BEGIN
     );
     
     v_simbolo := 'USD';
+    v_pro_cod := NULL; -- Inicializar para evitar problemas
     
     DBMS_OUTPUT.PUT_LINE('═══════════════════════════════════════════════════════════════════════════');
     DBMS_OUTPUT.PUT_LINE('PRODUCTOS DISPONIBLES');
@@ -193,11 +194,12 @@ BEGIN
         DBMS_OUTPUT.PUT_LINE('');
     END LOOP;
     
-    CLOSE v_cursor_catalogo;
-    
-    IF v_cursor_catalogo%ROWCOUNT = 0 THEN
+    -- Verificar si se encontraron productos antes de cerrar el cursor
+    IF v_cursor_catalogo%ROWCOUNT = 0 AND v_pro_cod IS NULL THEN
         DBMS_OUTPUT.PUT_LINE('No hay productos disponibles en el inventario de esta tienda.');
     END IF;
+    
+    CLOSE v_cursor_catalogo;
     
 EXCEPTION
     WHEN OTHERS THEN

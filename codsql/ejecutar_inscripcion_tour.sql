@@ -160,7 +160,7 @@ BEGIN
     DBMS_OUTPUT.PUT_LINE('');
     DBMS_OUTPUT.PUT_LINE('Participantes: ' || v_cantidad);
     DBMS_OUTPUT.PUT_LINE('Entradas generadas: ' || v_entradas);
-    DBMS_OUTPUT.PUT_LINE('Estado: PENDIENTE PAGO');
+    DBMS_OUTPUT.PUT_LINE('Estado: PAGO');
     DBMS_OUTPUT.PUT_LINE('');
     
     -- Mostrar información de participantes

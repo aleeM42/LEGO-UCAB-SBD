@@ -23,36 +23,87 @@ BEGIN
 end;
 /
 
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- FUNCIONES PARA CALCULAR TOTALES DE FACTURAS
+-- ═══════════════════════════════════════════════════════════════════════════════
+
+-- Función para calcular el total de una factura física
+CREATE OR REPLACE FUNCTION fn_calcular_total_factura_fisica(
+    p_fact_num IN NUMBER,
+    p_tienda_id IN NUMBER
+) RETURN NUMBER
+IS
+    v_total NUMBER := 0;
+    v_count NUMBER := 0;
+    v_count_con_precio NUMBER := 0;
+BEGIN
+    -- Primero verificar que existan detalles
+    SELECT COUNT(*)
+    INTO v_count
+    FROM det_fact_t dt
+    WHERE dt.det_ft_fact = p_fact_num
+      AND dt.det_ft_tienda_fact = p_tienda_id;
+    
+    IF v_count = 0 THEN
+        RETURN 0;
+    END IF;
+    
+    -- Verificar cuántos detalles tienen precio activo
+    SELECT COUNT(*)
+    INTO v_count_con_precio
+    FROM det_fact_t dt
+    JOIN hist_precios hp ON dt.det_ft_prod = hp.hp_prod 
+                        AND hp.hp_ffin IS NULL
+    WHERE dt.det_ft_fact = p_fact_num
+      AND dt.det_ft_tienda_fact = p_tienda_id;
+    
+    -- Si hay detalles pero ninguno tiene precio, retornar 0
+    IF v_count > 0 AND v_count_con_precio = 0 THEN
+        RETURN 0;
+    END IF;
+    
+    -- Calcular el total sumando cantidad * precio
+    SELECT NVL(SUM(dt.det_ft_cantidad * hp.hp_precio), 0)
+    INTO v_total
+    FROM det_fact_t dt
+    INNER JOIN hist_precios hp ON dt.det_ft_prod = hp.hp_prod 
+                               AND hp.hp_ffin IS NULL
+    WHERE dt.det_ft_fact = p_fact_num
+      AND dt.det_ft_tienda_fact = p_tienda_id;
+    
+    RETURN NVL(v_total, 0);
+EXCEPTION
+    WHEN OTHERS THEN
+        -- En caso de error, retornar 0 pero registrar el error
+        RETURN 0;
+END fn_calcular_total_factura_fisica;
+/
+
+-- Función para calcular el total de una factura online
+CREATE OR REPLACE FUNCTION fn_calcular_total_factura_online(
+    p_fact_num IN NUMBER
+) RETURN NUMBER
+IS
+    v_total NUMBER := 0;
+BEGIN
+    SELECT NVL(SUM(df.det_fo_cantidad * hp.hp_precio), 0)
+    INTO v_total
+    FROM det_fact_o df
+    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod 
+                        AND hp.hp_ffin IS NULL
+    WHERE df.det_fo_fact = p_fact_num;
+
+    RETURN v_total;
+EXCEPTION
+    WHEN OTHERS THEN
+        RETURN 0;
+END fn_calcular_total_factura_online;
+/
+
 
 -----------------------------------------------------------
 ------------------------- TOUR ----------------------------
 -----------------------------------------------------------
-
----funcion para el costo total de la inscripcion
-create or replace function fn_calcular_costo_inscripcion (p_tour_fecha in date, p_cantidad_participantes in number)
-return number is 
-    v_costo_unitario number;
-    v_costo_total number;
-begin
-    select to_costo into v_costo_unitario
-    from tours where to_fini = p_tour_fecha;
-
-    v_costo_total := v_costo_unitario * p_cantidad_participantes;
-    
-    return v_costo_total;
-
-end;
-/
-
---funcion para obtener moneda del tour (DKK,EUR,USD) 
-create or replace function fn_obtener_moneda_tour(p_tour_fecha in date)
-return varchar2 is
-    v_moneda varchar2(3);
-begin
-    v_moneda := 'USD';
-    return v_moneda;
-end;
-/
 
 ---funcion para validar periodo de inscripcion 
 create or replace function fn_inscripcion_abierta(p_tour_fecha date)
@@ -100,8 +151,6 @@ END fn_tour_disponible;
 /
 
 
-
-
 -- Función para validar si tour tiene cupos disponibles
 -- Modificada para permitir inscripciones en tours pasados sin validar cupos
 CREATE OR REPLACE FUNCTION fn_validar_cupos_tour(
@@ -141,374 +190,6 @@ EXCEPTION
     WHEN OTHERS THEN
         RAISE_APPLICATION_ERROR(-20803, 'Error validando cupos: ' || SQLERRM);
 END fn_validar_cupos_tour;
-/
-
-
--- funcion para verificar cupos del tour
-create or replace function verificar_cupos (p_fecha_tour date)
-return number is 
-    v_cupos_totales tours.to_cupos%type;
-    v_cupos_ocupados number := 0;
-    v_cupos_disponibles number;
-
-begin
-    select to_cupos into v_cupos_totales from tours 
-    where to_fini = p_fecha_tour;
-
-    if v_cupos_totales <= 0 then
-        raise_application_error(-20009, 'El tour no tiene cupos disponibles');
-    end if;
-
-    select count(*) into v_cupos_ocupados from inscripciones 
-    where ins_tour = p_fecha_tour and ins_estado = 'PAGO';
-
-    v_cupos_disponibles := v_cupos_totales - v_cupos_ocupados;
-    return v_cupos_disponibles;
-
-end;
-/
-
---funcion para validar la fecha del tour y es vigente 
-create or replace function validar_fecha_tour (p_fecha_tour date)
-return boolean is
-    v_tour_existe number;
-    v_fecha_actual date := sysdate; 
-    v_ano_actual number := extract(year from v_fecha_actual);
-begin
-
-    select count(*) into v_tour_existe from tours 
-    where to_fini = p_fecha_tour;
-
-    if v_tour_existe = 0 then
-        raise_application_error(-20010, 'La fecha seleccionada para le tour no esta disponible');
-    end if;
--- validar que la fecha no es del pasado
-    if p_fecha_tour < trunc(v_fecha_actual) THEN
-        raise_application_error(-20010, 'No se puede inscribir el tour en una fecha pasada');
-    end if;   
-
--- validar que la fecha esta dentro del rango de anos del proyecto 
-    if extract(year from p_fecha_tour) < 2024 then
-        raise_application_error(-20010, 'EL tour seleccionado esta fuera del rango de anos permitidos');
-    end if;
-    return true;
-
-    exception 
-        when others THEN
-        if sqlcode in (-20010) then
-            raise;
-        else 
-            raise_application_error(-20010, 'Error al validar la fecha del tour');
-        end if;    
-
-end;
-/
-
------------------------------------------------------------
--- Validaciones de clientes 
------------------------------------------------------------
--- funcion para obtener datos completos de un cliente 
- create or replace function obtener_cliente_info (p_cli_id number) 
- return sys_refcursor is
-    v_cursor sys_refcursor;
-    v_cliente_existe number; 
-
-begin 
-    select count (*) into v_cliente_existe 
-    from clientes where cli_id = p_cli_id;
-    
-    if v_cliente_existe = 0 THEN
-        raise_application_error(-20012, 'El cliente con id' || p_cli_id || 'no existe en la base de datos');
-    end if;
-
-    --abrir cursor con datos del cliente 
-
-    open v_cursor for 
-        select
-            cli_id,
-            cli_pnombre,
-            cli_papellido, 
-            cli_sapellido,
-            cli_snombre,
-            cli_dni,
-            cli_fnacimiento,
-            cli_nac,
-            cli_reside,
-            cli_numpas,
-            cli_fvenpas,
-            edad(cli_fnacimiento) AS edad_calculada,
-            p_id AS pais_id,
-            p_nom AS pais_nombre,
-            p_ue AS pais_pertenece_ue
-        from clientes c
-        left join paises p on c.cli_nac = p.p_id
-        where c.cli_id = p_cli_id;
-    return v_cursor;
-end;
-/
-
-
---validar si cliente no-Ue necesita pasaporte 
-create or replace function fn_validar_pasaporte_requerido (p_nacionalidad_id number)
-return boolean is 
-    v_ue varchar2(2);
-begin
-    select p_ue into v_ue
-    from paises where p_id = p_nacionalidad_id;
-
-    return (v_ue = 'NO');
-end;
-/
--- funcion para validar edad del cliente 
-
-create or replace function validar_edad_cliente (p_cli_id number)
-return boolean is
-    v_cli_fnacimiento clientes.cli_fnacimiento%type;
-    v_edad number;
-begin
-    select cli_fnacimiento into v_cli_fnacimiento 
-    from clientes where cli_id = p_cli_id;
-
-    v_edad:=  edad(v_cli_fnacimiento);
-    if v_edad < 21 then 
-        raise_application_error (-20013, 'La edad minima permitida, para realizar una compra, es 21 anos');
-    end if;
-    return true;
-end;
-/
-
---funcion para validar si existe el cliente
-create or replace function cliente_existe(p_cli_id number)
-return boolean is 
-    v_cont number;
-begin
-    select count(*) into v_cont
-    from clientes where cli_id = p_cli_id;
-
-    return (v_cont > 0);
-
-end;
-/
-
-
--- validar documentacion del cliente 
-
-create or replace function validar_documentacion_cliente (p_cli_id number)
-return boolean is
-    v_pais_id paises.p_id%type;
-    v_pertenece_ue paises.p_ue%type;
-    v_numpas clientes.cli_numpas%type;
-    v_fvenpas clientes.cli_fvenpas%type;
-BEGIN
-    select cli_nac, cli_numpas, cli_fvenpas 
-    into v_pais_id, v_numpas, v_fvenpas from clientes
-    where cli_id = p_cli_id; 
-
-    v_pertenece_ue := es_ue(v_pais_id);
-    if v_pertenece_ue = 'NO' then 
-        if v_numpas is null then 
-            raise_application_error(-20014, 'El cliente debe indicar numero de pasaporte');
-        end if;
-
-        if v_fvenpas is null then 
-            raise_application_error(-20014, 'El cliente debe indicar la fecha de vencimiento de su pasaporte');
-        end if;
-
-        if v_fvenpas < trunc (sysdate) then
-            raise_application_error(-20014, 'Debe ingresar un pasaporte vigente');
-        end if;
-    end if;
-END;
-/
-
------------------------------------------------------------
--- Validaciones de fan lego
------------------------------------------------------------
-
-CREATE OR REPLACE FUNCTION validar_edad_fan_lego (p_fl_id NUMBER)
-RETURN BOOLEAN IS
-    v_fecha_nac f_lego.fl_fnacimiento%TYPE;
-    v_edad_actual NUMBER;
-BEGIN
-    
-    SELECT fl_fnacimiento
-    INTO v_fecha_nac
-    FROM f_lego
-    WHERE fl_id = p_fl_id;
-    
-    v_edad_actual := edad(v_fecha_nac);
-    
-    IF v_edad_actual < 12 OR v_edad_actual > 20 THEN
-        RAISE_APPLICATION_ERROR(
-            -20015,
-            'Los Fans LEGO deben tener entre 12 y 20 años. ' ||
-            'Edad actual del fan: ' || v_edad_actual || ' años.'
-        );
-    END IF;
-    
-    RETURN TRUE;
-END validar_edad_fan_lego;
-/
-
----validar si fan lego existe 
-create or replace function fan_lego_existe (p_fl_id number)
-return boolean is 
-    v_cont number;
-begin
-    select count(*) into v_cont
-    from f_lego where fl_id = p_fl_id;
-
-    return (v_cont > 0);
-
-end;
-/
-
-
---- funcion para validar que tiene un representante asignado 
-
-create or replace function validar_representante_asignado (p_fl_id number) 
-return boolean is
-    v_fl_representante f_lego.fl_repre%type;
-    v_fl_fnac f_lego.FL_FNACIMIENTO%TYPE;
-    v_edad number;
-begin
-    select fl_repre, fl_fnacimiento into v_fl_representante, v_fl_fnac 
-    from f_lego where fl_id = p_fl_id;
-
-    v_edad := edad(v_fl_fnac);
-
-    if v_edad BETWEEN 12 and 17 then
-        if v_fl_representante is null then
-            raise_application_error(-20016, 'El fan lego debe tener un representante adulto asignado');
-        end if;
-    end if;
-
-    return true;
-
-end;
-/
-
-
---funcion para obtener los datos del fan lego + representante 
-
-create or replace function obtener_datos_fl (p_fl_id number) 
-return sys_refcursor is
-    v_cursor sys_refcursor;
-    v_fan_existe number;
-begin
-    select count(*) into v_fan_existe 
-    from f_lego where fl_id = p_fl_id;
-
-    if v_fan_existe = 0 then 
-        raise_application_error(-20017, 'EL fan lego no se pudo encontrar');
-    end if;
-
-    OPEN v_cursor FOR
-        SELECT 
-            -- Datos del Fan
-            f.fl_id,
-            f.fl_pnombre,
-            f.fl_papellido,
-            f.fl_sapellido,
-            f.fl_snombre,
-            f.fl_dni,
-            f.fl_fnacimiento,
-            f.fl_nac,
-            f.fl_numpas,
-            f.fl_fvenpas,
-            edad(f.fl_fnacimiento) AS edad_fan,
-            pf.p_nom AS pais_fan_nombre,
-            pf.p_ue AS pais_fan_ue,
-            
-            -- Datos del Representante
-            c.cli_id,
-            c.cli_pnombre AS rep_pnombre,
-            c.cli_papellido AS rep_papellido,
-            c.cli_sapellido AS rep_sapellido,
-            c.cli_snombre AS rep_snombre,
-            c.cli_dni AS rep_dni,
-            c.cli_fnacimiento AS rep_fnacimiento,
-            edad(c.cli_fnacimiento) AS edad_representante,
-            c.cli_nac AS rep_pais_nac,
-            pc.p_nom AS rep_pais_nombre,
-            c.cli_numpas AS rep_numpas,
-            c.cli_fvenpas AS rep_fvenpas
-            
-        FROM f_lego f
-        LEFT JOIN paises pf ON f.fl_nac = pf.p_id
-        LEFT JOIN clientes c ON f.fl_repre = c.cli_id
-        LEFT JOIN paises pc ON c.cli_nac = pc.p_id
-        WHERE f.fl_id = p_fl_id;
-    
-    RETURN v_cursor;
-
-
-
-
-end;
-/
-
-
---- validar documentacion del fan lego
-create or replace function validar_documentacion_fl (p_fl_id number)
-return boolean is
-    v_pais_id paises.p_id%TYPE;
-    v_pertenece_ue paises.p_ue%TYPE;
-    v_numpas f_lego.fl_numpas%TYPE;
-    v_fvenpas f_lego.fl_fvenpas%TYPE;
-
-begin
-    select fl_nac, fl_numpas, fl_fvenpas into v_pais_id, v_numpas, v_fvenpas
-    from f_lego where fl_id = p_fl_id;
-
-    v_pertenece_ue := es_ue(v_pais_id);
-
-    if v_pertenece_ue = 'NO' then 
-        if v_numpas is null then
-            raise_application_error(-20018, 'El fan lego debe indicar el numero de pasaporte');
-        end if;    
-
-        if v_fvenpas is null then 
-            raise_application_error(-20018,'El fan lego debe indicar la fecha de vencimiento de su pasaporte');
-        end if;
-
-        if v_fvenpas < trunc(sysdate) then 
-            raise_application_error(-20018, 'Debe proporcionar un pasaporte vigente');
-        end if;
-
-    end if;
-
-    return true;
-
-end;
-/
-
---- validacion para el representante (que sea mayor de edad)
-
-create or replace function validar_representante (p_cli_id number)
-return boolean is
-    v_fnacimiento clientes.cli_fnacimiento%type;
-    v_edad number;
-begin
-
-    if not cliente_existe(p_cli_id) then 
-        raise_application_error(-20019, 'El cliente representante no existe');
-    end if;
-
-    select cli_fnacimiento into v_fnacimiento 
-    from clientes where cli_id = p_cli_id;
-
-    v_edad := edad(v_fnacimiento);
-
-    if v_edad < 21 then 
-        raise_application_error(-20019, 'El cliente no puede ser un representante porque no tiene la edad para serlo');
-    end if; 
-
-    if not validar_documentacion_cliente(p_cli_id) then 
-        raise_application_error(-20019,'El representante no tiene la documentacion para viajar');
-    end if;
-return true;
-end;
 /
 
 --------------------------- FUNCIONES FACTURACION --------------------------------------
@@ -565,7 +246,6 @@ BEGIN
     END CASE;
 
     RETURN v_letra_precio;
-    
 END obtener_letra_precio;
 /
 
@@ -574,9 +254,6 @@ END obtener_letra_precio;
 ------------------------------------------------------------------------------------------
 
 ------------------------- TRIGGER TOUR ---------------------------------------------------
-
-
-
 --trigger para validar la edad del fan de legp y clientes en el detalle de la inscripcion
 CREATE OR REPLACE TRIGGER tr_validar_edad_inscripcion_tour
 BEFORE INSERT ON det_inscrip
@@ -678,7 +355,6 @@ BEGIN
     end if;     
 end;
 /
-
 --trigger para prevenir eliminación de inscripción pagada 
 create or replace trigger tr_proteger_inscripcion_pagada 
 before delete on inscripciones 
@@ -814,7 +490,7 @@ create or replace trigger no_eliminar_fact_o
 before delete on factura_o
 begin  
     raise_application_error(-20002, 'Las facturas online no pueden eliminarse');
-end;        
+end;
 /
 
 --trigger para no eliminar detalle facturas online
@@ -838,7 +514,7 @@ END;
 --trigger para no eliminar facturas de tienda
 create or replace trigger no_eliminar_fact_t
 before delete on factura_tf
-begin
+begin  
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
 /
@@ -856,7 +532,7 @@ END;
 CREATE OR REPLACE TRIGGER tr_det_fact_t_no_delete
 BEFORE DELETE ON det_fact_t
 FOR EACH ROW
-BEGIN
+    BEGIN
     RAISE_APPLICATION_ERROR(-20008, 'No se permite eliminar registros en la tabla DET_FACT_T.');
 END;
 /
@@ -864,15 +540,15 @@ END;
 CREATE OR REPLACE TRIGGER tr_descuentos_no_update
 BEFORE UPDATE ON descuentos
 FOR EACH ROW
-BEGIN
+        BEGIN
     RAISE_APPLICATION_ERROR(-20009, 'No se permite actualizar registros en la tabla DESCUENTOS.');
-END;
+        END;
 /
 
 CREATE OR REPLACE TRIGGER tr_descuentos_no_delete
 BEFORE DELETE ON descuentos
 FOR EACH ROW
-BEGIN
+        BEGIN
     RAISE_APPLICATION_ERROR(-20010, 'No se permite eliminar registros en la tabla DESCUENTOS.');
 END;
 /
@@ -890,7 +566,7 @@ COMPOUND TRIGGER
     g_prods_insertados tt_prods_reco; 
 
     AFTER EACH ROW IS
-    BEGIN
+        BEGIN
         g_prods_insertados(g_prods_insertados.COUNT + 1).pro_cod := :NEW.pro_cod;
         g_prods_insertados(g_prods_insertados.COUNT).pro_idtem := :NEW.pro_idtem;
     END AFTER EACH ROW;
@@ -907,7 +583,7 @@ COMPOUND TRIGGER
                 
         v_idx PLS_INTEGER;
         
-    BEGIN
+BEGIN
         v_idx := g_prods_insertados.FIRST;
         
         IF v_idx IS NOT NULL THEN
@@ -918,8 +594,8 @@ COMPOUND TRIGGER
                     IF r_existente.pro_cod != g_prods_insertados(v_idx).pro_cod THEN
                         INSERT INTO PROD_RELA (
                             rela_prod_cod, rela_prod_idtem, rela_setcod, rela_idtem
-                        )
-                        VALUES (
+    )
+    VALUES (
                             g_prods_insertados(v_idx).pro_cod,
                             g_prods_insertados(v_idx).pro_idtem,
                             r_existente.pro_cod,
@@ -936,13 +612,13 @@ COMPOUND TRIGGER
                             g_prods_insertados(v_idx).pro_idtem
                         );
                         
-                    END IF;
-                END LOOP;
-                
+    END IF;
+    END LOOP;
+    
                 v_idx := g_prods_insertados.NEXT(v_idx);
             END LOOP;
-        END IF;
-
+    END IF;
+    
     EXCEPTION
         WHEN OTHERS THEN
             RAISE;
@@ -957,556 +633,6 @@ END TRG_PRODUCTO_RELACIONADO;
 -------------------------------------------------------------------------------------------
 ------------------------------------- PROCEDIMIENTOS --------------------------------------
 -------------------------------------------------------------------------------------------
-CREATE OR REPLACE PROCEDURE pr_validar_fase_1 (
-    p_fecha_tour DATE,
-    p_participante_id NUMBER,
-    p_tipo_participante CHAR,
-    p_validar_cupos BOOLEAN,
-    p_resultado OUT VARCHAR2
-) IS
-    v_cupos_disponibles NUMBER;
-    v_es_valido BOOLEAN := TRUE;
-    v_mensaje VARCHAR2(1000) := '';
-BEGIN
-    
-    -- ════════════════════════════════════════════════════════
-    -- VALIDACIÓN 1: Verificar que la fecha del tour es válida
-    -- ════════════════════════════════════════════════════════
-    BEGIN
-        v_es_valido := validar_fecha_tour(p_fecha_tour);
-        v_mensaje := v_mensaje || ' [✓] Fecha del tour válida.';
-    EXCEPTION
-        WHEN OTHERS THEN
-            v_es_valido := FALSE;
-            v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-            RAISE;
-    END;
-    
-    -- ════════════════════════════════════════════════════════
-    -- VALIDACIÓN 2: Verificar cupos disponibles (opcional)
-    -- ════════════════════════════════════════════════════════
-    IF p_validar_cupos THEN
-        BEGIN
-            v_cupos_disponibles := verificar_cupos(p_fecha_tour);
-            IF v_cupos_disponibles <= 0 THEN
-                RAISE_APPLICATION_ERROR(
-                    -20010,
-                    'No hay cupos disponibles para este tour.'
-                );
-            END IF;
-            v_mensaje := v_mensaje || ' [✓] Cupos disponibles: ' || v_cupos_disponibles || '.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-    END IF;
-    
-    -- ════════════════════════════════════════════════════════
-    -- VALIDACIÓN 3: Validar participante (Cliente o Fan)
-    -- ════════════════════════════════════════════════════════
-    IF p_tipo_participante = 'C' THEN
-        
-        -- Validar cliente
-        IF NOT cliente_existe(p_participante_id) THEN
-            RAISE_APPLICATION_ERROR(
-                -20012,
-                'Cliente ID ' || p_participante_id || ' no existe.'
-            );
-        END IF;
-        v_mensaje := v_mensaje || ' [✓] Cliente existe.';
-        
-        
-        -- Validar documentación
-        BEGIN
-            v_es_valido := validar_documentacion_cliente(p_participante_id);
-            v_mensaje := v_mensaje || ' [✓] Documentación válida.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-        
-    ELSIF p_tipo_participante = 'F' THEN
-        
-        -- Validar fan LEGO
-        IF NOT fan_lego_existe(p_participante_id) THEN
-            RAISE_APPLICATION_ERROR(
-                -20017,
-                'Fan LEGO ID ' || p_participante_id || ' no existe.'
-            );
-        END IF;
-        v_mensaje := v_mensaje || ' [✓] Fan LEGO existe.';
-        
-        -- Validar edad (12-20 años)
-        BEGIN
-            v_es_valido := validar_edad_fan_lego(p_participante_id);
-            v_mensaje := v_mensaje || ' [✓] Edad en rango 12-20 años.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-        
-        -- Validar representante
-        BEGIN
-            v_es_valido := validar_representante_asignado(p_participante_id);
-            v_mensaje := v_mensaje || ' [✓] Representante asignado.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-        
-        -- Validar representante es válido
-        DECLARE
-            v_repre_id NUMBER;
-        BEGIN
-            SELECT fl_repre INTO v_repre_id FROM f_lego WHERE fl_id = p_participante_id;
-            v_es_valido := validar_representante(v_repre_id);
-            v_mensaje := v_mensaje || ' [✓] Representante es cliente válido.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-        
-        -- Validar documentación del fan
-        BEGIN
-            v_es_valido := validar_documentacion_fl(p_participante_id);
-            v_mensaje := v_mensaje || ' [✓] Documentación del fan válida.';
-        EXCEPTION
-            WHEN OTHERS THEN
-                v_es_valido := FALSE;
-                v_mensaje := v_mensaje || ' [✗] ' || SQLERRM;
-                RAISE;
-        END;
-        
-    ELSE
-        RAISE_APPLICATION_ERROR(
-            -20099,
-            'Tipo de participante inválido. Use "C" para cliente o "F" para fan.'
-        );
-    END IF;
-    
-    -- ════════════════════════════════════════════════════════
-    -- RESULTADO FINAL
-    -- ════════════════════════════════════════════════════════
-    IF v_es_valido THEN
-        p_resultado := 'VALIDACIÓN EXITOSA.' || v_mensaje;
-    ELSE
-        p_resultado := 'VALIDACIÓN FALLIDA.' || v_mensaje;
-    END IF;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        p_resultado := 'ERROR EN VALIDACIONES: ' || SQLERRM;
-        RAISE;
-END pr_validar_fase_1;
-/
-
---procedimiento para registrar cliente por primera vez 
-create or replace procedure sp_registrar_cliente_nuevo (
-  p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
-    p_papellido     IN CLIENTES.cli_papellido%TYPE,
-    p_sapellido     IN CLIENTES.cli_sapellido%TYPE,
-    p_dni           IN CLIENTES.cli_dni%TYPE,
-    p_fnacimiento   IN CLIENTES.cli_fnacimiento%TYPE,
-    p_nac           IN CLIENTES.cli_nac%TYPE,
-    p_reside        IN CLIENTES.cli_reside%TYPE,
-    p_numpas        IN CLIENTES.cli_numpas%TYPE DEFAULT NULL,
-    p_fvenpas       IN CLIENTES.cli_fvenpas%TYPE DEFAULT NULL,
-    p_snombre       IN CLIENTES.cli_snombre%TYPE DEFAULT NULL
-)
-AS
-    v_error_msg     VARCHAR2(255);
-    v_dni_count     NUMBER; 
-BEGIN
-
-    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL OR p_reside IS NULL THEN
-        
-        v_error_msg := 'Error: Faltan datos obligatorios.';
-
-        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
-        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
-        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
-        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
-        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
-        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad (cli_nac);'; END IF;
-        IF p_reside IS NULL THEN v_error_msg := v_error_msg || ' País de residencia (cli_reside);'; END IF;
-
-        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
-    END IF;
-
-    -- Validar que los nombres solo contengan letras (sin números)
-    IF NOT REGEXP_LIKE(p_pnombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF p_snombre IS NOT NULL AND NOT REGEXP_LIKE(p_snombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF NOT REGEXP_LIKE(p_papellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF NOT REGEXP_LIKE(p_sapellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-
-    -- Validar DNI único en clientes
-    SELECT COUNT(*)
-    INTO v_dni_count
-    FROM CLIENTES
-    WHERE cli_dni = p_dni;
-
-    IF v_dni_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro cliente.');
-    END IF;
-    
-    -- Validar DNI único en fans LEGO
-    SELECT COUNT(*)
-    INTO v_dni_count
-    FROM F_LEGO
-    WHERE fl_dni = p_dni;
-
-    IF v_dni_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para un fan LEGO.');
-    END IF;
-    
-    -- Validar número de pasaporte único (si se proporciona)
-    IF p_numpas IS NOT NULL THEN
-        -- Verificar en clientes
-        SELECT COUNT(*)
-        INTO v_dni_count
-        FROM CLIENTES
-        WHERE cli_numpas = p_numpas AND cli_numpas IS NOT NULL;
-
-        IF v_dni_count > 0 THEN
-            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para otro cliente.');
-        END IF;
-        
-        -- Verificar en fans LEGO
-        SELECT COUNT(*)
-        INTO v_dni_count
-        FROM F_LEGO
-        WHERE fl_numpas = p_numpas AND fl_numpas IS NOT NULL;
-
-        IF v_dni_count > 0 THEN
-            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para un fan LEGO.');
-        END IF;
-    END IF;
-    
-    INSERT INTO CLIENTES (
-        cli_id,
-        cli_pnombre,
-        cli_papellido,
-        cli_sapellido,
-        cli_dni,
-        cli_fnacimiento,
-        cli_nac,
-        cli_reside,
-        cli_numpas,
-        cli_fvenpas,
-        cli_snombre
-    )
-    VALUES (
-        clientes_seq.NEXTVAL,
-        p_pnombre,
-        p_papellido,
-        p_sapellido,
-        p_dni,
-        p_fnacimiento,
-        p_nac,
-        p_reside,
-        p_numpas,
-        p_fvenpas,
-        p_snombre
-    );
-
-    COMMIT;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        RAISE_APPLICATION_ERROR(-20001, 'Error en la inserción o integridad de datos: ' || SQLERRM);
-END sp_registrar_cliente_nuevo;
-/
-
---procedimiento para registrar fan LEGO con validaciones
-CREATE OR REPLACE PROCEDURE sp_registrar_fan_lego (
-    p_pnombre       IN F_LEGO.fl_pnombre%TYPE,
-    p_papellido     IN F_LEGO.fl_papellido%TYPE,
-    p_sapellido     IN F_LEGO.fl_sapellido%TYPE,
-    p_dni           IN F_LEGO.fl_dni%TYPE,
-    p_fnacimiento   IN F_LEGO.fl_fnacimiento%TYPE,
-    p_nac           IN F_LEGO.fl_nac%TYPE,
-    p_numpas        IN F_LEGO.fl_numpas%TYPE DEFAULT NULL,
-    p_fvenpas       IN F_LEGO.fl_fvenpas%TYPE DEFAULT NULL,
-    p_snombre       IN F_LEGO.fl_snombre%TYPE DEFAULT NULL,
-    p_repre         IN F_LEGO.fl_repre%TYPE DEFAULT NULL,
-    p_fl_id         OUT NUMBER,
-    p_mensaje       OUT VARCHAR2
-)
-AS
-    v_error_msg     VARCHAR2(255);
-    v_dni_count     NUMBER;
-    v_fl_id         NUMBER;
-BEGIN
-    -- Validar datos obligatorios
-    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL THEN
-        v_error_msg := 'Error: Faltan datos obligatorios.';
-        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
-        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
-        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
-        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
-        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
-        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad;'; END IF;
-        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
-    END IF;
-
-    -- Validar que los nombres solo contengan letras (sin números)
-    IF NOT REGEXP_LIKE(p_pnombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF p_snombre IS NOT NULL AND NOT REGEXP_LIKE(p_snombre, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo nombre solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF NOT REGEXP_LIKE(p_papellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El primer apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-    
-    IF NOT REGEXP_LIKE(p_sapellido, '^[a-zA-ZáéíóúÁÉÍÓÚñÑüÜ\s\-\'']+$') THEN
-        RAISE_APPLICATION_ERROR(-20005, 'Error: El segundo apellido solo puede contener letras, espacios, guiones y apóstrofes. No se permiten números.');
-    END IF;
-
-    -- Validar DNI único en fans LEGO
-    SELECT COUNT(*)
-    INTO v_dni_count
-    FROM F_LEGO
-    WHERE fl_dni = p_dni;
-
-    IF v_dni_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro fan LEGO.');
-    END IF;
-    
-    -- Validar DNI único en clientes
-    SELECT COUNT(*)
-    INTO v_dni_count
-    FROM CLIENTES
-    WHERE cli_dni = p_dni;
-
-    IF v_dni_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para un cliente.');
-    END IF;
-    
-    -- Validar número de pasaporte único (si se proporciona)
-    IF p_numpas IS NOT NULL THEN
-        -- Verificar en fans LEGO
-        SELECT COUNT(*)
-        INTO v_dni_count
-        FROM F_LEGO
-        WHERE fl_numpas = p_numpas AND fl_numpas IS NOT NULL;
-
-        IF v_dni_count > 0 THEN
-            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para otro fan LEGO.');
-        END IF;
-        
-        -- Verificar en clientes
-        SELECT COUNT(*)
-        INTO v_dni_count
-        FROM CLIENTES
-        WHERE cli_numpas = p_numpas AND cli_numpas IS NOT NULL;
-
-        IF v_dni_count > 0 THEN
-            RAISE_APPLICATION_ERROR(-20004, 'Error: El número de pasaporte ' || p_numpas || ' ya está registrado para un cliente.');
-        END IF;
-    END IF;
-    
-    -- Obtener siguiente ID de la secuencia
-    SELECT f_lego_seq.NEXTVAL INTO v_fl_id FROM dual;
-    
-    -- Insertar fan LEGO
-    INSERT INTO F_LEGO (
-        fl_id,
-        fl_pnombre,
-        fl_papellido,
-        fl_sapellido,
-        fl_dni,
-        fl_fnacimiento,
-        fl_nac,
-        fl_numpas,
-        fl_fvenpas,
-        fl_snombre,
-        fl_repre
-    ) VALUES (
-        v_fl_id,
-        p_pnombre,
-        p_papellido,
-        p_sapellido,
-        p_dni,
-        p_fnacimiento,
-        p_nac,
-        p_numpas,
-        p_fvenpas,
-        p_snombre,
-        p_repre
-    );
-    
-    p_fl_id := v_fl_id;
-    p_mensaje := 'Fan LEGO registrado exitosamente con ID: ' || v_fl_id;
-    
-    COMMIT;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        p_fl_id := NULL;
-        p_mensaje := 'Error: ' || SQLERRM;
-        RAISE;
-END sp_registrar_fan_lego;
-/
-
---procedimiento para crear inscripcion (antes de pago)
-CREATE OR REPLACE PROCEDURE sp_crear_inscripcion(
-    p_tour_fecha IN DATE,
-    p_cliente_responsable IN NUMBER,
-    p_participantes_json IN VARCHAR2,  -- JSON con [{tipo, cliente_id/fan_id}]
-    p_numero_inscripcion OUT NUMBER,
-    p_costo_total OUT NUMBER,
-    p_mensaje OUT VARCHAR2
-)
-IS
-    v_cantidad_participantes NUMBER := 0;
-    v_costo_unitario NUMBER;
-    v_cupos_requeridos NUMBER;
-    v_cliente_edad NUMBER;
-    CURSOR c_participantes IS
-    SELECT REGEXP_SUBSTR(p_participantes_json, '[^;]+', 1, LEVEL) AS linea
-    FROM dual
-    CONNECT BY LEVEL <= REGEXP_COUNT(p_participantes_json, ';') + 1;
-BEGIN
-    SAVEPOINT sp_inscripcion_inicio;
-    
-    -- 1. VALIDAR TOUR
-    IF NOT fn_tour_disponible(p_tour_fecha) THEN
-        RAISE_APPLICATION_ERROR(-20911, 'Tour no disponible en esa fecha');
-    END IF;
-    
-    -- 2. VALIDAR PERÍODO DE INSCRIPCIÓN
-    IF NOT fn_inscripcion_abierta(p_tour_fecha) THEN
-        RAISE_APPLICATION_ERROR(-20912, 
-            'Período de inscripción cerrado para este tour');
-    END IF;
-    
-    -- 3. VALIDAR CLIENTE RESPONSABLE Y OBTENER EDAD
-    BEGIN
-        SELECT TRUNC((SYSDATE - cli_fnacimiento) / 365.25)
-        INTO v_cliente_edad
-        FROM clientes WHERE cli_id = p_cliente_responsable;
-    EXCEPTION
-        WHEN NO_DATA_FOUND THEN
-        RAISE_APPLICATION_ERROR(-20913, 
-            'Cliente responsable no existe');
-    END;
-    
-    -- 4. VALIDAR EDAD CLIENTE RESPONSABLE >= 21 AÑOS
-    
-    IF v_cliente_edad < 21 THEN
-        RAISE_APPLICATION_ERROR(-20914, 
-            'Responsable debe ser mayor de 21 años');
-    END IF;
-    
-    -- 5. PROCESAR PARTICIPANTES
-    FOR registro IN c_participantes LOOP
-        v_cantidad_participantes := v_cantidad_participantes + 1;
-    END LOOP;
-    
-    IF v_cantidad_participantes = 0 THEN
-        RAISE_APPLICATION_ERROR(-20915, 
-            'Inscripción debe tener al menos un participante');
-    END IF;
-    
-    -- 6. VALIDAR CUPOS DISPONIBLES
-    IF NOT fn_validar_cupos_tour(p_tour_fecha, v_cantidad_participantes) THEN
-        RAISE_APPLICATION_ERROR(-20916, 
-            'No hay cupos disponibles para la cantidad solicitada');
-    END IF;
-    
-    -- 7. CALCULAR COSTO TOTAL
-    p_costo_total := fn_calcular_costo_inscripcion(p_tour_fecha, 
-                                                    v_cantidad_participantes);
-    
-    -- 8. CREAR INSCRIPCIÓN (ESTADO: PENDIENTE PAGO)
-    SELECT inscripciones_seq.NEXTVAL INTO p_numero_inscripcion FROM dual;
-    
-    INSERT INTO inscripciones (
-        ins_num, ins_femision, ins_total, ins_estado, ins_tour
-    ) VALUES (
-        p_numero_inscripcion, SYSDATE, p_costo_total, 'PENDIENTE', p_tour_fecha
-    );
-    
-    -- 9. REGISTRAR PARTICIPANTES Y ENTRADAS
-    DECLARE
-        v_contador NUMBER := 1;
-        v_tipo_asistente VARCHAR2(10);
-        v_cliente_id NUMBER;
-        v_fan_id NUMBER;
-        v_linea VARCHAR2(100);
-    BEGIN
-        FOR registro IN c_participantes LOOP
-            v_linea := TRIM(registro.linea);
-            
-            IF v_linea IS NOT NULL THEN
-                v_tipo_asistente := TRIM(REGEXP_SUBSTR(v_linea, '^[^:]+', 1, 1));
-                
-                INSERT INTO det_inscrip (
-                    det_ins_id, det_ins_ins, det_ins_tipo,
-                    det_ins_fan, det_ins_cli
-                ) VALUES (
-                    det_inscrip_seq.NEXTVAL, p_numero_inscripcion, v_tipo_asistente,
-                    CASE WHEN v_tipo_asistente = 'MENOR' 
-                         THEN TO_NUMBER(TRIM(REGEXP_SUBSTR(v_linea, '[^:]+', 1, 2)))
-                         ELSE NULL END,
-                    CASE WHEN v_tipo_asistente = 'ADULTO' 
-                         THEN TO_NUMBER(TRIM(REGEXP_SUBSTR(v_linea, '[^:]+', 1, 2)))
-                         ELSE NULL END
-                );
-                
-                -- Crear entrada usando la secuencia entradas_seq
-                INSERT INTO entradas_tour (
-                    ent_insc, ent_id, ent_tipo_asistente
-                ) VALUES (
-                    p_numero_inscripcion, entradas_seq.NEXTVAL, v_tipo_asistente
-                );
-                
-                v_contador := v_contador + 1;
-            END IF;
-        END LOOP;
-    END;
-    
-    p_mensaje := 'Inscripción creada. Número: ' || p_numero_inscripcion || 
-                 ' | Total: ' || p_costo_total || ' USD | Estado: PENDIENTE PAGO';
-    
-    COMMIT;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK TO sp_inscripcion_inicio;
-        p_numero_inscripcion := -1;
-        p_costo_total := 0;
-        p_mensaje := 'Error: ' || SQLERRM;
-END sp_crear_inscripcion;
-/
-
 -- Procedimiento para confirmar pago y emitir recibo y entradas
 CREATE OR REPLACE PROCEDURE sp_confirmar_pago_inscripcion(
     p_numero_inscripcion IN NUMBER,
@@ -1604,7 +730,6 @@ BEGIN
                  ' | Entradas generadas: ' || p_entradas_generadas;
     
     COMMIT;
-    
 EXCEPTION
     WHEN OTHERS THEN
         ROLLBACK TO sp_pago_inicio;
@@ -1612,66 +737,6 @@ EXCEPTION
         p_entradas_generadas := 0;
         p_mensaje := 'Error: ' || SQLERRM;
 END sp_confirmar_pago_inscripcion;
-/
--- Procedimiento para obtener información completa de inscripción
-CREATE OR REPLACE PROCEDURE sp_obtener_informacion_inscripcion(
-    p_numero_inscripcion IN NUMBER,
-    p_cursor_resultado OUT SYS_REFCURSOR
-)
-IS
-BEGIN
-    OPEN p_cursor_resultado FOR
-    SELECT 
-        i.ins_num AS numero_inscripcion,
-        i.ins_femision AS fecha_emision,
-        i.ins_total AS costo_total,
-        i.ins_estado AS estado,
-        i.ins_tour AS fecha_tour,
-        t.to_cupos AS cupos_tour,
-        COUNT(DISTINCT di.det_ins_id) AS total_participantes,
-        SUM(CASE WHEN di.det_ins_tipo = 'ADULTO' THEN 1 ELSE 0 END) AS adultos,
-        SUM(CASE WHEN di.det_ins_tipo = 'MENOR' THEN 1 ELSE 0 END) AS menores
-    FROM inscripciones i
-    JOIN tours t ON i.ins_tour = t.to_fini
-    LEFT JOIN det_inscrip di ON i.ins_num = di.det_ins_ins
-    WHERE i.ins_num = p_numero_inscripcion
-    GROUP BY i.ins_num, i.ins_femision, i.ins_total, i.ins_estado, 
-             i.ins_tour, t.to_cupos;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20931, 
-            'Error obteniendo información: ' || SQLERRM);
-END sp_obtener_informacion_inscripcion;
-/
-
--- Procedimiento para obtener disponibilidad de tours
-CREATE OR REPLACE PROCEDURE sp_obtener_tours_disponibles(
-    p_cursor_resultado OUT SYS_REFCURSOR
-)
-IS
-BEGIN
-    OPEN p_cursor_resultado FOR
-    SELECT 
-        t.to_fini AS fecha_tour,
-        t.to_cupos AS cupos_totales,
-        t.to_costo AS costo_por_persona,
-        COUNT(DISTINCT di.det_ins_id) AS inscritos_confirmados,
-        t.to_cupos - COUNT(DISTINCT di.det_ins_id) AS cupos_disponibles,
-        CASE WHEN fn_inscripcion_abierta(t.to_fini) THEN 'ABIERTA'
-             ELSE 'CERRADA' END AS estado_inscripcion
-    FROM tours t
-    LEFT JOIN inscripciones i ON t.to_fini = i.ins_tour AND i.ins_estado = 'PAGO'
-    LEFT JOIN det_inscrip di ON i.ins_num = di.det_ins_ins
-    WHERE t.to_fini > SYSDATE
-    GROUP BY t.to_fini, t.to_cupos, t.to_costo
-    ORDER BY t.to_fini ASC;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20932, 
-            'Error obteniendo tours: ' || SQLERRM);
-END sp_obtener_tours_disponibles;
 /
 
 ------------------------------------------------------------------------------------------
@@ -1691,7 +756,7 @@ IS
     PRAGMA EXCEPTION_INIT(e_producto_no_encontrado, -20001);
 BEGIN
     BEGIN
-SELECT 
+    SELECT 
             pro_cod
         INTO
             v_pro_cod
@@ -1699,8 +764,8 @@ SELECT
             productos
         WHERE
             UPPER(pro_nom) = UPPER(p_nombre_producto);
-
-    EXCEPTION
+    
+EXCEPTION
         WHEN NO_DATA_FOUND THEN
             RAISE e_producto_no_encontrado;
     END;
@@ -1852,7 +917,7 @@ BEGIN
     COMMIT;
 
     DBMS_OUTPUT.PUT_LINE('Producto "' || p_nombre_producto || '" (ID: ' || v_pro_cod || ') agregado al catálogo de ' || p_nombre_pais || ' (ID: ' || v_pais_id || ') con límite de compra: ' || p_limite_compra);
-
+    
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         DBMS_OUTPUT.PUT_LINE('Error: No se encontró el producto o el país especificado.');
@@ -1863,83 +928,6 @@ EXCEPTION
         ROLLBACK;
 END;
 /
-
--- procedimiento para insertar el cliente por primera vez
-CREATE OR REPLACE PROCEDURE INSERTAR_CLIENTE (
-    p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
-    p_papellido     IN CLIENTES.cli_papellido%TYPE,
-    p_sapellido     IN CLIENTES.cli_sapellido%TYPE,
-    p_dni           IN CLIENTES.cli_dni%TYPE,
-    p_fnacimiento   IN CLIENTES.cli_fnacimiento%TYPE,
-    p_nac           IN CLIENTES.cli_nac%TYPE,
-    p_reside        IN CLIENTES.cli_reside%TYPE,
-    p_numpas        IN CLIENTES.cli_numpas%TYPE DEFAULT NULL,
-    p_fvenpas       IN CLIENTES.cli_fvenpas%TYPE DEFAULT NULL,
-    p_snombre       IN CLIENTES.cli_snombre%TYPE DEFAULT NULL
-)
-AS
-    v_error_msg     VARCHAR2(255);
-    v_dni_count     NUMBER; 
-BEGIN
-
-    IF p_pnombre IS NULL OR p_papellido IS NULL OR p_sapellido IS NULL OR p_dni IS NULL OR p_fnacimiento IS NULL OR p_nac IS NULL OR p_reside IS NULL THEN
-        
-        v_error_msg := 'Error: Faltan datos obligatorios.';
-
-        IF p_pnombre IS NULL THEN v_error_msg := v_error_msg || ' Primer nombre;'; END IF;
-        IF p_papellido IS NULL THEN v_error_msg := v_error_msg || ' Primer apellido;'; END IF;
-        IF p_sapellido IS NULL THEN v_error_msg := v_error_msg || ' Segundo apellido;'; END IF;
-        IF p_dni IS NULL THEN v_error_msg := v_error_msg || ' DNI;'; END IF;
-        IF p_fnacimiento IS NULL THEN v_error_msg := v_error_msg || ' Fecha de nacimiento;'; END IF;
-        IF p_nac IS NULL THEN v_error_msg := v_error_msg || ' País de nacionalidad (cli_nac);'; END IF;
-        IF p_reside IS NULL THEN v_error_msg := v_error_msg || ' País de residencia (cli_reside);'; END IF;
-
-        RAISE_APPLICATION_ERROR(-20002, v_error_msg);
-    END IF;
-
-    SELECT COUNT(*)
-    INTO v_dni_count
-    FROM CLIENTES
-    WHERE cli_dni = p_dni;
-
-    IF v_dni_count > 0 THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Error: El DNI ' || p_dni || ' ya está registrado para otro cliente.');
-    END IF;
-    
-    INSERT INTO CLIENTES (
-        cli_pnombre,
-        cli_papellido,
-        cli_sapellido,
-        cli_dni,
-        cli_fnacimiento,
-        cli_nac,
-        cli_reside,
-        cli_numpas,
-        cli_fvenpas,
-        cli_snombre
-    )
-    VALUES (
-        p_pnombre,
-        p_papellido,
-        p_sapellido,
-        p_dni,
-        p_fnacimiento,
-        p_nac,
-        p_reside,
-        p_numpas,
-        p_fvenpas,
-        p_snombre
-    );
-
-    COMMIT;
-
-EXCEPTION
-    WHEN OTHERS THEN
-        ROLLBACK;
-        RAISE_APPLICATION_ERROR(-20001, 'Error en la inserción o integridad de datos: ' || SQLERRM);
-END INSERTAR_CLIENTE;
-/
-
 
 -- procedimiento para insertar productos
 CREATE OR REPLACE PROCEDURE insertar_producto (
@@ -2034,7 +1022,9 @@ EXCEPTION
 END insertar_tema;
 /
 
--- procedimiento para iniciar la factura de tienda fisica
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- PROCEDIMIENTO: INICIAR_FACTURA_FISICA
+-- ═══════════════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_FISICA (
     p_cli_id IN NUMBER,
     p_ti_id IN NUMBER,
@@ -2065,11 +1055,13 @@ EXCEPTION
     WHEN OTHERS THEN
         p_msg := 'Error al iniciar cabecera: ' || SQLERRM;
         p_fact_tf_num := NULL;
-        ROLLBACK;
+        RAISE;
 END;
 /
 
--- procedimiento para insertar detalles a la factura de tienda fisica
+-- ═══════════════════════════════════════════════════════════════════════════════
+-- PROCEDIMIENTO: INSERTAR_DETALLE_FISICA
+-- ═══════════════════════════════════════════════════════════════════════════════
 CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_FISICA (
     p_ti_id IN NUMBER,
     p_fact_num IN NUMBER,
@@ -2083,56 +1075,184 @@ AS
     v_total_stock NUMBER;
     v_precio_unitario NUMBER;
     v_subtotal NUMBER;
-    v_pro_raned VARCHAR2(8);
+    v_total NUMBER;
+    v_pro_raned VARCHAR2(8);  
+    v_det_ft_id NUMBER;
+    v_factura_existe NUMBER;
+    v_lote_existe NUMBER;
+    v_producto_existe NUMBER;
 BEGIN
-    -- Verificar stock disponible considerando descuentos ya realizados
-    SELECT NVL(SUM(l.lot_stock - NVL(d.total_descontado, 0)), 0) INTO v_total_stock
-    FROM lotes l
-    LEFT JOIN (
-        SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
-        FROM descuentos
-        GROUP BY d_lote, d_prod, d_tienda
-    ) d ON l.lot_id = d.d_lote
-        AND l.lot_prod = d.d_prod
-        AND l.lot_tienda = d.d_tienda
-    WHERE l.lot_tienda = p_ti_id AND l.lot_prod = p_pro_cod
-      AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0;
+    DBMS_OUTPUT.PUT_LINE('DEBUG INSERTAR_DETALLE_FISICA: INICIO - tienda=' || p_ti_id || 
+                         ', factura=' || p_fact_num || ', producto=' || p_pro_cod || 
+                         ', cantidad=' || p_cantidad);
     
-    IF v_total_stock < p_cantidad THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente en lotes para la cantidad requerida. Stock disponible: ' || v_total_stock);
-    END IF;
-
-    -- Seleccionar el lote con mayor stock disponible
-    SELECT l.lot_id, (l.lot_stock - NVL(d.total_descontado, 0))
-    INTO v_lote_id, v_stock_disp
-    FROM lotes l
-    LEFT JOIN (
-        SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
-        FROM descuentos
-        GROUP BY d_lote, d_prod, d_tienda
-    ) d ON l.lot_id = d.d_lote
-        AND l.lot_prod = d.d_prod
-        AND l.lot_tienda = d.d_tienda
-    WHERE l.lot_tienda = p_ti_id
-      AND l.lot_prod = p_pro_cod
-      AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0
-    ORDER BY (l.lot_stock - NVL(d.total_descontado, 0)) DESC
-    FETCH FIRST 1 ROW ONLY;
-
-    SELECT hp_precio
-    INTO v_precio_unitario
-    FROM hist_precios
-    WHERE hp_prod = p_pro_cod
-      AND hp_ffin IS NULL;
-      
-    SELECT pro_raned
-    INTO v_pro_raned
+    -- 1. Verificar que el producto existe
+    SELECT COUNT(*)
+    INTO v_producto_existe
     FROM productos
     WHERE pro_cod = p_pro_cod;
     
+    DBMS_OUTPUT.PUT_LINE('DEBUG: Producto existe? ' || v_producto_existe);
+    
+    IF v_producto_existe = 0 THEN
+        RAISE_APPLICATION_ERROR(-20032, 'Error: El producto ' || p_pro_cod || ' no existe.');
+    END IF;
+    
+    -- 2. Verificar que la factura existe
+    SELECT COUNT(*)
+    INTO v_factura_existe
+    FROM factura_tf
+    WHERE fact_tf_num = p_fact_num
+      AND fact_tf_tie = p_ti_id;
+    
+    IF v_factura_existe = 0 THEN
+        RAISE_APPLICATION_ERROR(-20026, 'Error: La factura ' || p_fact_num || ' no existe en la tienda ' || p_ti_id);
+    END IF;
+    
+    -- 3. Verificar stock disponible considerando descuentos ya realizados
+    SELECT NVL(SUM(l.lot_stock - NVL(d.total_descontado, 0)), 0) 
+    INTO v_total_stock
+    FROM lotes l
+    LEFT JOIN (
+        SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
+        FROM descuentos
+        GROUP BY d_lote, d_prod, d_tienda
+    ) d ON l.lot_id = d.d_lote
+        AND l.lot_prod = d.d_prod
+        AND l.lot_tienda = d.d_tienda
+    WHERE l.lot_tienda = p_ti_id 
+      AND l.lot_prod = p_pro_cod
+      AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0;
+    
+    IF v_total_stock < p_cantidad THEN
+        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente. Disponible: ' || v_total_stock || ', Requerido: ' || p_cantidad);
+    END IF;
+
+    -- 4. Seleccionar el lote con mayor stock disponible
+    DBMS_OUTPUT.PUT_LINE('DEBUG: Buscando lote para producto ' || p_pro_cod || ' en tienda ' || p_ti_id);
+    
+    BEGIN
+        SELECT l.lot_id, (l.lot_stock - NVL(d.total_descontado, 0))
+        INTO v_lote_id, v_stock_disp
+        FROM lotes l
+        LEFT JOIN (
+            SELECT d_lote, d_prod, d_tienda, SUM(d_cantidad) AS total_descontado
+            FROM descuentos
+            GROUP BY d_lote, d_prod, d_tienda
+        ) d ON l.lot_id = d.d_lote
+            AND l.lot_prod = d.d_prod
+            AND l.lot_tienda = d.d_tienda
+        WHERE l.lot_tienda = p_ti_id
+          AND l.lot_prod = p_pro_cod
+          AND (l.lot_stock - NVL(d.total_descontado, 0)) > 0
+        ORDER BY (l.lot_stock - NVL(d.total_descontado, 0)) DESC
+        FETCH FIRST 1 ROW ONLY;
+        
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Lote encontrado - lot_id=' || v_lote_id || ', stock_disp=' || v_stock_disp);
+        
+        -- Verificar que se obtuvo un lote válido
+        IF v_lote_id IS NULL THEN
+            DBMS_OUTPUT.PUT_LINE('DEBUG: v_lote_id es NULL después del SELECT');
+            RAISE_APPLICATION_ERROR(-20033, 'Error: No se encontró un lote disponible para el producto ' || p_pro_cod || ' en la tienda ' || p_ti_id);
+        END IF;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            DBMS_OUTPUT.PUT_LINE('DEBUG: NO_DATA_FOUND al buscar lote');
+            RAISE_APPLICATION_ERROR(-20033, 'Error: No se encontró un lote disponible para el producto ' || p_pro_cod || ' en la tienda ' || p_ti_id);
+    END;
+
+    -- 5. Verificar que el lote existe y coincide exactamente con la foreign key
+    -- La foreign key es: (lot_prod, lot_tienda, lot_id)
+    SELECT COUNT(*)
+    INTO v_lote_existe
+    FROM lotes
+    WHERE lot_prod = p_pro_cod
+      AND lot_tienda = p_ti_id
+      AND lot_id = v_lote_id;
+    
+    IF v_lote_existe = 0 THEN
+        RAISE_APPLICATION_ERROR(-20025, 'Error: El lote ' || v_lote_id || ' no existe para el producto ' || p_pro_cod || ' en la tienda ' || p_ti_id);
+    END IF;
+
+    -- 5. Obtener precio y tipo de cliente del producto
+    SELECT hp.hp_precio, p.pro_raned
+    INTO v_precio_unitario, v_pro_raned
+    FROM hist_precios hp
+    JOIN productos p ON hp.hp_prod = p.pro_cod
+    WHERE hp.hp_prod = p_pro_cod
+      AND hp.hp_ffin IS NULL;
+    
+    IF v_precio_unitario IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20023, 'Error: No se encontró precio activo para el producto ' || p_pro_cod);
+    END IF;
+    
+    IF v_pro_raned IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20023, 'Error: No se encontró tipo de cliente (pro_raned) para el producto ' || p_pro_cod);
+    END IF;
+    
     v_subtotal := p_cantidad * v_precio_unitario;
 
+    -- 6. Obtener el siguiente ID de detalle
+    SELECT det_fact_tf_seq.NEXTVAL INTO v_det_ft_id FROM dual;
+    
+    IF v_det_ft_id IS NULL THEN
+        RAISE_APPLICATION_ERROR(-20021, 'Error: No se pudo obtener el siguiente valor de la secuencia det_fact_tf_seq.');
+    END IF;
+    
+    -- 7. Verificar foreign keys antes del INSERT
+    -- Foreign key 1: (det_ft_tienda_fact, det_ft_fact) → factura_tf(fact_tf_tie, fact_tf_num)
+    DECLARE
+        v_factura_fk_existe NUMBER;
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_factura_fk_existe
+        FROM factura_tf
+        WHERE fact_tf_tie = p_ti_id
+          AND fact_tf_num = p_fact_num;
+        
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Verificando FK factura - existe? ' || v_factura_fk_existe);
+        
+        IF v_factura_fk_existe = 0 THEN
+            RAISE_APPLICATION_ERROR(-20034, 'Error FK factura: No existe factura_tf con (tienda=' || p_ti_id || ', num=' || p_fact_num || ')');
+        END IF;
+    END;
+    
+    -- Foreign key 2: (det_ft_prod, det_ft_tienda_lote, det_ft_lote) → lotes(lot_prod, lot_tienda, lot_id)
+    DECLARE
+        v_lote_fk_existe NUMBER;
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_lote_fk_existe
+        FROM lotes
+        WHERE lot_prod = p_pro_cod
+          AND lot_tienda = p_ti_id
+          AND lot_id = v_lote_id;
+        
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Verificando FK lote - existe? ' || v_lote_fk_existe || 
+                            ' (prod=' || p_pro_cod || ', tienda=' || p_ti_id || ', lote=' || v_lote_id || ')');
+        
+        IF v_lote_fk_existe = 0 THEN
+            RAISE_APPLICATION_ERROR(-20035, 'Error FK lote: No existe lote con (prod=' || p_pro_cod || 
+                ', tienda=' || p_ti_id || ', lote_id=' || v_lote_id || ')');
+        END IF;
+    END;
+    
+    -- 8. INSERTAR EL DETALLE - Este es el paso crítico
+    -- IMPORTANTE: NO usar bloque BEGIN/EXCEPTION aquí para que el error real de Oracle se propague
+    -- Si el INSERT falla, Oracle mostrará el error exacto (constraint, foreign key, etc.)
+    -- Estructura según lego_create.sql:
+    --   Foreign key 1: (det_ft_tienda_fact, det_ft_fact) → factura_tf(fact_tf_tie, fact_tf_num)
+    --   Foreign key 2: (det_ft_prod, det_ft_tienda_lote, det_ft_lote) → lotes(lot_prod, lot_tienda, lot_id)
+    
+    -- Debug: Mostrar valores antes del INSERT
+    DBMS_OUTPUT.PUT_LINE('DEBUG INSERTAR_DETALLE: det_ft_id=' || v_det_ft_id || 
+                         ', fact=' || p_fact_num || ', tienda_fact=' || p_ti_id ||
+                         ', lote=' || v_lote_id || ', prod=' || p_pro_cod ||
+                         ', tienda_lote=' || p_ti_id || ', tipo_cli=' || v_pro_raned ||
+                         ', cantidad=' || p_cantidad);
+    
     INSERT INTO det_fact_t (
+        det_ft_id,
         det_ft_cantidad,
         det_ft_fact,
         det_ft_tienda_fact,
@@ -2142,15 +1262,43 @@ BEGIN
         det_ft_tipo_cli
     )
     VALUES (
+        v_det_ft_id,
         p_cantidad,
         p_fact_num,
-        p_ti_id,
-        v_lote_id,
-        p_pro_cod,
-        p_ti_id,
-        v_pro_raned
+        p_ti_id,              -- det_ft_tienda_fact (debe coincidir con fact_tf_tie)
+        v_lote_id,            -- det_ft_lote
+        p_pro_cod,            -- det_ft_prod
+        p_ti_id,              -- det_ft_tienda_lote (debe coincidir con lot_tienda del lote)
+        v_pro_raned           -- det_ft_tipo_cli (VARCHAR2(8))
     );
+    
+    -- Verificar que se insertó correctamente
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20024, 'Error: No se pudo insertar el detalle. SQL%ROWCOUNT = 0');
+    END IF;
+    
+    DBMS_OUTPUT.PUT_LINE('DEBUG: INSERT exitoso. SQL%ROWCOUNT=' || SQL%ROWCOUNT);
+    
+    -- 10. Verificar que el detalle existe en la tabla inmediatamente después del INSERT
+    DECLARE
+        v_detalle_verificado NUMBER;
+    BEGIN
+        SELECT COUNT(*)
+        INTO v_detalle_verificado
+        FROM det_fact_t
+        WHERE det_ft_fact = p_fact_num
+          AND det_ft_tienda_fact = p_ti_id
+          AND det_ft_id = v_det_ft_id;
+        
+        IF v_detalle_verificado = 0 THEN
+            RAISE_APPLICATION_ERROR(-20027, 'Error: El detalle no se insertó en la tabla. ' ||
+                'det_ft_id=' || v_det_ft_id || ', fact=' || p_fact_num || ', tienda=' || p_ti_id ||
+                '. Verificar foreign keys: factura (' || p_ti_id || ',' || p_fact_num || 
+                '), lote (' || p_pro_cod || ',' || p_ti_id || ',' || v_lote_id || ')');
+        END IF;
+    END;
 
+    -- 11. Insertar descuento en la tabla descuentos (esto se hace después de verificar que el detalle se insertó)
     INSERT INTO descuentos (
         d_lote,
         d_prod,
@@ -2166,24 +1314,38 @@ BEGIN
         p_cantidad
     );
 
+    -- 12. Calcular y actualizar el total de la factura
+    SELECT NVL(fact_tf_total, 0)
+    INTO v_total
+    FROM factura_tf
+    WHERE fact_tf_num = p_fact_num
+      AND fact_tf_tie = p_ti_id;
+    
+    v_total := v_total + v_subtotal;
+    
     UPDATE factura_tf
-    SET fact_tf_total = fact_tf_total + v_subtotal
+    SET fact_tf_total = v_total
     WHERE fact_tf_tie = p_ti_id
       AND fact_tf_num = p_fact_num;
       
     IF SQL%ROWCOUNT = 0 THEN
-        RAISE_APPLICATION_ERROR(-20004, 'La factura ' || p_fact_num || ' en la tienda ' || p_ti_id || ' no existe.');
+        RAISE_APPLICATION_ERROR(-20004, 'Error: No se pudo actualizar el total de la factura ' || p_fact_num);
     END IF;
     
-    p_msg := 'Exito. Detalle insertado. Lote: ' || v_lote_id || ' Subtotal: ' || v_subtotal;
+    p_msg := 'Exito. Detalle insertado. Lote: ' || v_lote_id || ' Subtotal: ' || v_subtotal || ' Total factura: ' || v_total;
     
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: No se encontro un lote valido para el producto o no tiene precio activo.';
-        ROLLBACK;
+        DBMS_OUTPUT.PUT_LINE('DEBUG EXCEPTION NO_DATA_FOUND: ' || p_msg);
+        RAISE;
     WHEN OTHERS THEN
-        p_msg := 'Error al insertar detalle: ' || SQLERRM;
-        ROLLBACK;
+        p_msg := 'Error al insertar detalle: ' || SQLERRM || ' (Código: ' || SQLCODE || ')';
+        DBMS_OUTPUT.PUT_LINE('DEBUG EXCEPTION OTHERS: ' || p_msg);
+        DBMS_OUTPUT.PUT_LINE('DEBUG: Valores usados - fact=' || p_fact_num || 
+                            ', tienda=' || p_ti_id || ', prod=' || p_pro_cod ||
+                            ', lote=' || v_lote_id || ', det_id=' || v_det_ft_id);
+        RAISE;
 END;
 /
 
@@ -2197,23 +1359,64 @@ CREATE OR REPLACE PROCEDURE FINALIZAR_FACTURA_FISICA (
 )
 AS
     v_total NUMBER;
+    v_total_actual NUMBER;
+    v_detalles_count NUMBER;
 BEGIN
-    SELECT NVL(SUM(dt.det_ft_cantidad * hp.hp_precio), 0)
-    INTO v_total
-    FROM det_fact_t dt
-    JOIN HIST_PRECIOS hp ON dt.det_ft_prod = hp.hp_prod AND hp.hp_ffin IS NULL
-    WHERE dt.det_ft_tienda_fact = p_ti_id
-      AND dt.det_ft_fact = p_fact_num;
+    -- Verificar que hay detalles antes de finalizar
+    SELECT COUNT(*)
+    INTO v_detalles_count
+    FROM det_fact_t
+    WHERE det_ft_fact = p_fact_num
+      AND det_ft_tienda_fact = p_ti_id;
     
-    p_msg := 'Exito. Factura FINALIZADA, lista para COMMIT. Total calculado: ' || v_total;
+    IF v_detalles_count = 0 THEN
+        RAISE_APPLICATION_ERROR(-20030, 'Error: No hay detalles para la factura ' || p_fact_num || 
+            ' en la tienda ' || p_ti_id || '. No se puede finalizar una factura sin detalles.');
+    END IF;
+    
+    -- Calcular el total usando la función
+    v_total := fn_calcular_total_factura_fisica(p_fact_num, p_ti_id);
+    
+    -- Si el total es 0 pero hay detalles, recalcular manualmente
+    IF v_total = 0 AND v_detalles_count > 0 THEN
+        SELECT NVL(SUM(dt.det_ft_cantidad * hp.hp_precio), 0)
+        INTO v_total
+        FROM det_fact_t dt
+        INNER JOIN hist_precios hp ON dt.det_ft_prod = hp.hp_prod 
+                                   AND hp.hp_ffin IS NULL
+        WHERE dt.det_ft_fact = p_fact_num
+          AND dt.det_ft_tienda_fact = p_ti_id;
+    END IF;
+    
+    -- Actualizar el total en la factura
+    UPDATE factura_tf
+    SET fact_tf_total = v_total
+    WHERE fact_tf_num = p_fact_num
+      AND fact_tf_tie = p_ti_id;
+    
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-20011, 'No se pudo actualizar el total de la factura ' || p_fact_num);
+    END IF;
+    
+    -- Verificar que se actualizó correctamente
+    SELECT fact_tf_total
+    INTO v_total_actual
+    FROM factura_tf
+    WHERE fact_tf_num = p_fact_num
+      AND fact_tf_tie = p_ti_id;
+    
+    p_msg := 'Exito. Factura FINALIZADA, lista para COMMIT. Total calculado: ' || v_total_actual || 
+             ' | Detalles: ' || v_detalles_count;
     
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: No se encontro detalles para la factura.';
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
     WHEN OTHERS THEN
         p_msg := 'Error al finalizar factura: ' || SQLERRM;
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
 END;
 /
 
@@ -2225,7 +1428,18 @@ CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_ONLINE (
 )
 AS
     v_fact_num NUMBER;
+    v_cliente_existe NUMBER;
 BEGIN
+    -- Verificar que el cliente existe
+    SELECT COUNT(*)
+    INTO v_cliente_existe
+    FROM clientes
+    WHERE cli_id = p_cli_id;
+    
+    IF v_cliente_existe = 0 THEN
+        RAISE_APPLICATION_ERROR(-22020, 'Error: El cliente ' || p_cli_id || ' no existe.');
+    END IF;
+    
     INSERT INTO factura_o (
         fact_o_femision,
         fact_o_total,
@@ -2242,6 +1456,10 @@ BEGIN
     )
     RETURNING fact_o_num INTO v_fact_num; 
 
+    IF v_fact_num IS NULL THEN
+        RAISE_APPLICATION_ERROR(-22021, 'Error: No se pudo obtener el número de factura después del INSERT.');
+    END IF;
+
     p_fact_o_num := v_fact_num;
     p_msg := 'Exito. Cabecera online iniciada. Factura: ' || v_fact_num;
     
@@ -2249,7 +1467,8 @@ EXCEPTION
     WHEN OTHERS THEN
         p_msg := 'Error al iniciar cabecera online: ' || SQLERRM;
         p_fact_o_num := NULL;
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
 END;
 /
 
@@ -2305,8 +1524,9 @@ BEGIN
         v_pro_raned
     );
 
+    -- Calcular y actualizar el total usando la función
     UPDATE factura_o
-    SET fact_o_total = fact_o_total + v_subtotal
+    SET fact_o_total = fn_calcular_total_factura_online(p_fact_num)
     WHERE fact_o_num = p_fact_num;
     
     IF SQL%ROWCOUNT = 0 THEN
@@ -2349,13 +1569,14 @@ AS
     
     e_total_cero EXCEPTION;
 BEGIN
-    SELECT SUM(df.det_fo_cantidad * hp.hp_precio), fo.fact_o_cli
-    INTO v_total_detalles, v_cli_id
-    FROM det_fact_o df
-    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod AND hp.hp_ffin IS NULL
-    JOIN factura_o fo ON df.det_fo_fact = fo.fact_o_num
-    WHERE df.det_fo_fact = p_fact_num
-    GROUP BY fo.fact_o_cli;
+    -- Calcular el total de detalles usando la función
+    v_total_detalles := fn_calcular_total_factura_online(p_fact_num);
+    
+    -- Obtener el cliente de la factura
+    SELECT fact_o_cli
+    INTO v_cli_id
+    FROM factura_o
+    WHERE fact_o_num = p_fact_num;
     
     IF v_total_detalles IS NULL OR v_total_detalles <= 0 THEN
         RAISE e_total_cero;
@@ -2442,7 +1663,7 @@ AS
     v_precio_actual NUMBER(10, 2);
 
     CURSOR c_productos IS
-        SELECT
+SELECT 
             l.lot_prod,
             hp.hp_precio
         FROM lotes l
@@ -2498,130 +1719,6 @@ EXCEPTION
 END CONVERTIR_PRECIOS_TIENDA;
 /
 
-
-
-
-
---================================================================================
--- 5. ÍNDICES PARA OPTIMIZACIÓN
---================================================================================
-
--- Índices para búsquedas rápidas en tours
-CREATE INDEX idx_inscripciones_tour ON inscripciones(ins_tour);
-CREATE INDEX idx_inscripciones_estado ON inscripciones(ins_estado);
-CREATE INDEX idx_inscripciones_fecha ON inscripciones(ins_femision);
-CREATE INDEX idx_det_inscrip_insc ON det_inscrip(det_ins_ins);
-CREATE INDEX idx_entradas_insc ON entradas_tour(ent_insc);
-CREATE INDEX idx_auditoria_tours_insc ON auditoria_tours(aud_inscripcion_num);
-CREATE INDEX idx_auditoria_tours_fecha ON auditoria_tours(aud_fecha);
-
---================================================================================
--- 8. PROCEDIMIENTOS DE REPORTE PARA TOURS
---================================================================================
-
--- Procedimiento para obtener ingresos por año
-CREATE OR REPLACE PROCEDURE sp_reporte_ingresos_tours_anual(
-    p_ano IN NUMBER,
-    p_cursor_resultado OUT SYS_REFCURSOR
-)
-IS
-BEGIN
-    OPEN p_cursor_resultado FOR
-    SELECT 
-        t.to_fini AS fecha_tour,
-        COUNT(DISTINCT di.det_ins_id) AS participantes,
-        SUM(i.ins_total) AS ingresos_dkk,
-        ROUND(SUM(i.ins_total) / 7.46, 2) AS ingresos_eur,
-        ROUND(SUM(i.ins_total) / 6.90, 2) AS ingresos_usd
-    FROM tours t
-    JOIN inscripciones i ON t.to_fini = i.ins_tour
-    LEFT JOIN det_inscrip di ON i.ins_num = di.det_ins_ins
-    WHERE i.ins_estado = 'PAGO'
-      AND EXTRACT(YEAR FROM t.to_fini) = p_ano
-    GROUP BY t.to_fini
-    ORDER BY t.to_fini DESC;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20951, 
-            'Error generando reporte: ' || SQLERRM);
-END sp_reporte_ingresos_tours_anual;
-/
--- Procedimiento para obtener distribución de nacionalidades
-CREATE OR REPLACE PROCEDURE sp_reporte_nacionalidades_tour(
-    p_ano IN NUMBER,
-    p_cursor_resultado OUT SYS_REFCURSOR
-)
-IS
-BEGIN
-    OPEN p_cursor_resultado FOR
-    SELECT 
-        p.p_nac AS nacionalidad,
-        COUNT(*) AS cantidad_participantes,
-        ROUND((COUNT(*) * 100.0 / 
-            (SELECT COUNT(*) FROM det_inscrip di
-             JOIN inscripciones i ON di.det_ins_ins = i.ins_num
-             JOIN tours t ON i.ins_tour = t.to_fini
-             WHERE i.ins_estado = 'PAGO'
-             AND EXTRACT(YEAR FROM t.to_fini) = p_ano)), 2) AS porcentaje
-    FROM det_inscrip di
-    JOIN inscripciones i ON di.det_ins_ins = i.ins_num
-    JOIN tours t ON i.ins_tour = t.to_fini
-    LEFT JOIN clientes c ON di.det_ins_cli = c.cli_id
-    LEFT JOIN f_lego f ON di.det_ins_fan = f.fl_id
-    LEFT JOIN paises p ON COALESCE(c.cli_nac, f.fl_nac) = p.p_id
-    WHERE i.ins_estado = 'PAGO'
-      AND EXTRACT(YEAR FROM t.to_fini) = p_ano
-    GROUP BY p.p_nac
-    ORDER BY cantidad_participantes DESC;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20952, 
-            'Error generando reporte nacionalidades: ' || SQLERRM);
-END sp_reporte_nacionalidades_tour;
-/
--- Procedimiento para obtener distribución por rango de edad
-CREATE OR REPLACE PROCEDURE sp_reporte_rangos_edad_tour(
-    p_ano IN NUMBER,
-    p_cursor_resultado OUT SYS_REFCURSOR
-)
-IS
-BEGIN
-    OPEN p_cursor_resultado FOR
-    SELECT 
-        CASE 
-            WHEN TRUNC((SYSDATE - COALESCE(c.cli_fnacimiento, f.fl_fnacimiento)) / 365.25) 
-                 BETWEEN 12 AND 17 THEN '12-17 años'
-            WHEN TRUNC((SYSDATE - COALESCE(c.cli_fnacimiento, f.fl_fnacimiento)) / 365.25) 
-                 BETWEEN 18 AND 30 THEN '18-30 años'
-            WHEN TRUNC((SYSDATE - COALESCE(c.cli_fnacimiento, f.fl_fnacimiento)) / 365.25) 
-                 BETWEEN 31 AND 60 THEN '31-60 años'
-            ELSE 'Mayor de 60 años'
-        END AS rango_edad,
-        COUNT(*) AS cantidad_participantes,
-        ROUND((COUNT(*) * 100.0 / 
-            (SELECT COUNT(*) FROM det_inscrip di
-             JOIN inscripciones i ON di.det_ins_ins = i.ins_num
-             JOIN tours t ON i.ins_tour = t.to_fini
-             WHERE i.ins_estado = 'PAGO'
-             AND EXTRACT(YEAR FROM t.to_fini) = p_ano)), 2) AS porcentaje
-    FROM det_inscrip di
-    JOIN inscripciones i ON di.det_ins_ins = i.ins_num
-    JOIN tours t ON i.ins_tour = t.to_fini
-    LEFT JOIN clientes c ON di.det_ins_cli = c.cli_id
-    LEFT JOIN f_lego f ON di.det_ins_fan = f.fl_id
-    WHERE i.ins_estado = 'PAGO'
-      AND EXTRACT(YEAR FROM t.to_fini) = p_ano
-    GROUP BY rango_edad
-    ORDER BY cantidad_participantes DESC;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        RAISE_APPLICATION_ERROR(-20953, 
-            'Error generando reporte edades: ' || SQLERRM);
-END sp_reporte_rangos_edad_tour;
-/
 
 ------------------------------------------------------------------------------------------
 ------------------- PROCEDIMIENTOS TIENDA—----------------------------
@@ -3014,174 +2111,17 @@ EXCEPTION
     WHEN OTHERS THEN
         p_msg := 'Error al iniciar cabecera: ' || SQLERRM;
         p_fact_tf_num := NULL;
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
 END;
 /
 
--- procedimiento para insertar detalles a la factura de tienda fisica
-CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_FISICA (
-    p_ti_id IN NUMBER,
-    p_fact_num IN NUMBER,
-    p_pro_cod IN NUMBER,
-    p_cantidad IN NUMBER,
-    p_msg OUT VARCHAR2
-)
-AS
-    v_lote_id NUMBER;
-    v_stock_disp NUMBER;
-    v_total_stock NUMBER;
-    v_precio_unitario NUMBER;
-    v_subtotal NUMBER;
-    v_pro_raned VARCHAR2(8);
-BEGIN
-    SELECT NVL(SUM(lot_stock), 0) INTO v_total_stock
-    FROM lotes
-    WHERE lot_tienda = p_ti_id AND lot_prod = p_pro_cod;
-    
-    IF v_total_stock < p_cantidad THEN
-        RAISE_APPLICATION_ERROR(-20003, 'Stock Insuficiente en lotes para la cantidad requerida.');
-    END IF;
-
-    SELECT lot_id, lot_stock
-    INTO v_lote_id, v_stock_disp
-    FROM lotes
-    WHERE lot_tienda = p_ti_id
-      AND lot_prod = p_pro_cod
-    ORDER BY lot_stock DESC
-    FETCH FIRST 1 ROW ONLY;
-
-    SELECT hp_precio
-    INTO v_precio_unitario
-    FROM hist_precios
-    WHERE hp_prod = p_pro_cod
-      AND hp_ffin IS NULL;
-      
-    SELECT pro_raned
-    INTO v_pro_raned
-    FROM productos
-    WHERE pro_cod = p_pro_cod;
-    
-    v_subtotal := p_cantidad * v_precio_unitario;
-
-    INSERT INTO det_fact_t (
-        det_ft_cantidad,
-        det_ft_fact,
-        det_ft_tienda_fact,
-        det_ft_lote,
-        det_ft_prod,
-        det_ft_tienda_lote,
-        det_ft_tipo_cli
-    )
-    VALUES (
-        p_cantidad,
-        p_fact_num,
-        p_ti_id,
-        v_lote_id,
-        p_pro_cod,
-        p_ti_id,
-        v_pro_raned
-    );
-
-    INSERT INTO descuentos (
-        d_lote,
-        d_prod,
-        d_tienda,
-        d_fecha,
-        d_cantidad
-    )
-    VALUES (
-        v_lote_id,
-        p_pro_cod,
-        p_ti_id,
-        SYSDATE,
-        p_cantidad
-    );
-
-    UPDATE factura_tf
-    SET fact_tf_total = fact_tf_total + v_subtotal
-    WHERE fact_tf_tie = p_ti_id
-      AND fact_tf_num = p_fact_num;
-      
-    IF SQL%ROWCOUNT = 0 THEN
-        RAISE_APPLICATION_ERROR(-20004, 'La factura ' || p_fact_num || ' en la tienda ' || p_ti_id || ' no existe.');
-    END IF;
-    
-    p_msg := 'Exito. Detalle insertado. Lote: ' || v_lote_id || ' Subtotal: ' || v_subtotal;
-    
-EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-        p_msg := 'Error: No se encontro un lote valido para el producto o no tiene precio activo.';
-        ROLLBACK;
-    WHEN OTHERS THEN
-        p_msg := 'Error al insertar detalle: ' || SQLERRM;
-        ROLLBACK;
-END;
-/
+-- Esta versión duplicada del procedimiento FINALIZAR_FACTURA_FISICA ha sido eliminada.
+-- Se usa la versión correcta que está más arriba en el archivo (línea ~1295).
 
 
--- procedimiento para finalizar la factura de tienda fisica
-CREATE OR REPLACE PROCEDURE FINALIZAR_FACTURA_FISICA (
-    p_ti_id IN NUMBER,
-    p_fact_num IN NUMBER,
-    p_msg OUT VARCHAR2
-)
-AS
-    v_total NUMBER;
-BEGIN
-    SELECT NVL(SUM(dt.det_ft_cantidad * hp.hp_precio), 0)
-    INTO v_total
-    FROM det_fact_t dt
-    JOIN HIST_PRECIOS hp ON dt.det_ft_prod = hp.hp_prod AND hp.hp_ffin IS NULL
-    WHERE dt.det_ft_tienda_fact = p_ti_id
-      AND dt.det_ft_fact = p_fact_num;
-    
-    p_msg := 'Exito. Factura FINALIZADA, lista para COMMIT. Total calculado: ' || v_total;
-    
-EXCEPTION
-    WHEN NO_DATA_FOUND THEN
-        p_msg := 'Error: No se encontro detalles para la factura.';
-        ROLLBACK;
-    WHEN OTHERS THEN
-        p_msg := 'Error al finalizar factura: ' || SQLERRM;
-        ROLLBACK;
-END;
-/
-
--- procedimiento para iniciar la factura de venta online
-CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_ONLINE (
-    p_cli_id IN NUMBER,
-    p_fact_o_num OUT NUMBER, 
-    p_msg OUT VARCHAR2
-)
-AS
-    v_fact_num NUMBER;
-BEGIN
-    INSERT INTO factura_o (
-        fact_o_femision,
-        fact_o_total,
-        fact_o_puntosgen,
-        fact_o_cli,
-        venta_gratis
-    )
-    VALUES (
-        SYSDATE,
-        0, 
-        0, 
-        p_cli_id,
-        'NO'
-    )
-    RETURNING fact_o_num INTO v_fact_num; 
-
-    p_fact_o_num := v_fact_num;
-    p_msg := 'Exito. Cabecera online iniciada. Factura: ' || v_fact_num;
-    
-EXCEPTION
-    WHEN OTHERS THEN
-        p_msg := 'Error al iniciar cabecera online: ' || SQLERRM;
-        p_fact_o_num := NULL;
-        ROLLBACK;
-END;
-/
+-- Esta versión duplicada del procedimiento INICIAR_FACTURA_ONLINE ha sido eliminada.
+-- Se usa la versión correcta que está más arriba en el archivo (línea ~1424).
 
 -- procedimiento para insertar detalles a la factura de venta online
 CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_ONLINE (
@@ -3235,8 +2175,9 @@ BEGIN
         v_pro_raned
     );
 
+    -- Calcular y actualizar el total usando la función
     UPDATE factura_o
-    SET fact_o_total = fact_o_total + v_subtotal
+    SET fact_o_total = fn_calcular_total_factura_online(p_fact_num)
     WHERE fact_o_num = p_fact_num;
     
     IF SQL%ROWCOUNT = 0 THEN
@@ -3279,13 +2220,14 @@ AS
     
     e_total_cero EXCEPTION;
 BEGIN
-    SELECT SUM(df.det_fo_cantidad * hp.hp_precio), fo.fact_o_cli
-    INTO v_total_detalles, v_cli_id
-    FROM det_fact_o df
-    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod AND hp.hp_ffin IS NULL
-    JOIN factura_o fo ON df.det_fo_fact = fo.fact_o_num
-    WHERE df.det_fo_fact = p_fact_num
-    GROUP BY fo.fact_o_cli;
+    -- Calcular el total de detalles usando la función
+    v_total_detalles := fn_calcular_total_factura_online(p_fact_num);
+    
+    -- Obtener el cliente de la factura
+    SELECT fact_o_cli
+    INTO v_cli_id
+    FROM factura_o
+    WHERE fact_o_num = p_fact_num;
     
     IF v_total_detalles IS NULL OR v_total_detalles <= 0 THEN
         RAISE e_total_cero;

@@ -85,7 +85,7 @@ DECLARE
     v_pro_cod NUMBER;
     v_pro_nom VARCHAR2(50);
     v_pro_desc VARCHAR2(800);
-    v_pro_raned NUMBER;
+    v_pro_raned VARCHAR2(8);
     v_pro_ranpr VARCHAR2(4);
     v_precio_usd NUMBER;
     v_precio_mostrar NUMBER;
@@ -130,11 +130,12 @@ BEGIN
         DBMS_OUTPUT.PUT_LINE('');
     END LOOP;
     
-    CLOSE v_cursor_catalogo;
-    
+    -- Verificar si se encontraron productos antes de cerrar el cursor
     IF v_cursor_catalogo%ROWCOUNT = 0 THEN
         DBMS_OUTPUT.PUT_LINE('No hay productos disponibles en el catálogo para este país.');
     END IF;
+    
+    CLOSE v_cursor_catalogo;
     
 EXCEPTION
     WHEN OTHERS THEN

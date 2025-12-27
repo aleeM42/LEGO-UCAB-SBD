@@ -100,8 +100,6 @@ IS
     v_venta_gratis VARCHAR2(2) := 'NO';
     v_recargo_porcentaje NUMBER;
 BEGIN
-    SAVEPOINT sp_venta_online_inicio;
-    
     -- Validar que ambos strings tengan la misma cantidad de elementos
     IF p_productos_ids IS NULL OR LENGTH(TRIM(p_productos_ids)) = 0 THEN
         RAISE_APPLICATION_ERROR(-22010, 'Debe proporcionar al menos un producto.');
@@ -137,6 +135,9 @@ BEGIN
         p_moneda := 'USD';
         v_recargo_porcentaje := 0.15;  -- 15% para no-UE
     END IF;
+    
+    -- Establecer SAVEPOINT después de las validaciones iniciales y antes de iniciar factura
+    SAVEPOINT sp_venta_online_inicio;
     
     -- Iniciar factura
     INICIAR_FACTURA_ONLINE(
@@ -227,12 +228,8 @@ BEGIN
     FROM factura_o
     WHERE fact_o_num = v_fact_num;
     
-    -- Calcular total de detalles (sin envío ni recargos)
-    SELECT SUM(df.det_fo_cantidad * hp.hp_precio)
-    INTO v_total_detalles
-    FROM det_fact_o df
-    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod AND hp.hp_ffin IS NULL
-    WHERE df.det_fo_fact = v_fact_num;
+    -- Calcular total de detalles (sin envío ni recargos) usando la función
+    v_total_detalles := fn_calcular_total_factura_online(v_fact_num);
     
     p_total_usd := v_total_detalles;
     
@@ -274,7 +271,14 @@ BEGIN
     
 EXCEPTION
     WHEN OTHERS THEN
-        ROLLBACK TO sp_venta_online_inicio;
+        -- Intentar hacer ROLLBACK al SAVEPOINT si existe, si no, hacer ROLLBACK completo
+        BEGIN
+            ROLLBACK TO sp_venta_online_inicio;
+        EXCEPTION
+            WHEN OTHERS THEN
+                -- Si el SAVEPOINT no existe, hacer ROLLBACK completo
+                ROLLBACK;
+        END;
         p_factura_num := NULL;
         p_total_usd := 0;
         p_total_mostrar := 0;
