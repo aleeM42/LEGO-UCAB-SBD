@@ -68,9 +68,10 @@ BEGIN
     -- ═══════════════════════════════════════════════════════════════════════════
     -- PASO 2: VALIDAR PERÍODO DE INSCRIPCIÓN
     -- ═══════════════════════════════════════════════════════════════════════════
-    IF NOT fn_inscripcion_abierta(p_tour_fecha) THEN
-        RAISE_APPLICATION_ERROR(-20912, 'Período de inscripción cerrado para este tour');
-    END IF;
+    -- Validación de período de inscripción deshabilitada para permitir inscripciones en tours pasados
+    -- IF NOT fn_inscripcion_abierta(p_tour_fecha) THEN
+    --     RAISE_APPLICATION_ERROR(-20912, 'Período de inscripción cerrado para este tour');
+    -- END IF;
     
     -- ═══════════════════════════════════════════════════════════════════════════
     -- PASO 3: VALIDAR Y OBTENER DATOS DEL CLIENTE RESPONSABLE

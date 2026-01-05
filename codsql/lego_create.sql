@@ -53,24 +53,23 @@ create table temas (
     constraint check_tipot check (te_tipo in('SERIE','TEMA'))
 );
 
-create table productos (
-    pro_cod number(4) not null unique,
-    pro_idtem number(4) not null,
-    pro_nom varchar2(50) not null,
-    pro_desc varchar2(800) not null,
-    pro_raned number(2) not null,
-    pro_ranpr number(4) not null,
-    pro_set varchar2(2) not null,
-    pro_instr varchar2(15),
-    pro_piecs number(5), 
-    set_id number(4),
-    set_idtem number(4),
-
-    constraint pk_productos primary key(pro_cod, pro_idtem),
-    constraint fk_temaprod foreign key (pro_idtem) references temas(te_id),
-    constraint f_set foreign key (set_id, set_idtem) references productos (pro_cod, pro_idtem),
-    constraint ck_setprod check (pro_set in( 'SI','NO'))
-);            
+CREATE TABLE productos (   
+    pro_cod NUMBER(4) DEFAULT ON NULL productos_seq.NEXTVAL NOT NULL,
+    pro_idtem NUMBER(4) NOT NULL,
+    pro_nom VARCHAR2(100) NOT NULL, 
+    pro_desc VARCHAR2(2000) NOT NULL, 
+    pro_raned VARCHAR2(8) NOT NULL, 
+    pro_ranpr VARCHAR2(4) NOT NULL, 
+    pro_set VARCHAR2(2) NOT NULL, 
+    pro_instr VARCHAR2(15), 
+    pro_piecs NUMBER(5), 
+    set_id NUMBER(4), 
+    
+    CONSTRAINT pk_productos PRIMARY KEY(pro_cod), 
+    CONSTRAINT fk_temaprod FOREIGN KEY (pro_idtem) REFERENCES temas(te_id),
+    CONSTRAINT f_set FOREIGN KEY (set_id) REFERENCES productos (pro_cod), 
+    CONSTRAINT ck_setprod CHECK (pro_set IN( 'SI','NO')) 
+);          
  
 --secuencia para clientes y fans lego
 create sequence clientes_seq start with 1 increment by 1;
@@ -294,35 +293,33 @@ CREATE TABLE factura_o (
 create sequence det_fact_tf_seq start with 1 increment by 1;
 create sequence det_fact_o_seq start with 1 increment by 1;
 
-create table det_fact_t (
-    det_ft_fact number(4) not null,
-    det_ft_id number(4) not null,
-    det_ft_cantidad number(4) not null,
-    det_ft_lote number(4) not null,
-    det_ft_tienda number(4) not null,
-    det_ft_prod number(4) not null,
-    det_ft_idtem number(4) not null,
-    det_ft_tipo_cli VARCHAR2(8) not null,
+CREATE TABLE det_fact_t ( 
+    det_ft_id NUMBER(4) DEFAULT ON NULL det_fact_tf_seq.NEXTVAL NOT NULL, 
+    det_ft_cantidad NUMBER(4) NOT NULL,
+    det_ft_tipo_cli VARCHAR2(8), 
+    det_ft_fact NUMBER(4) NOT NULL, 
+    det_ft_tienda_fact NUMBER(4) NOT NULL,    
+    det_ft_lote NUMBER(4) NOT NULL,
+    det_ft_prod NUMBER(4) NOT NULL,
+    det_ft_tienda_lote NUMBER(4) NOT NULL,
 
-    constraint pk_det_facturatf primary key (det_ft_fact, det_ft_id),
-    constraint fk_fact_det_fact_tf foreign key (det_ft_fact) references factura_tf(fact_tf_num),
-    constraint fk_factdet_lote foreign key (det_ft_prod, det_ft_idtem, det_ft_tienda, det_ft_lote) references lotes (lot_prod, lot_idtem, lot_tienda, lot_id)
+    CONSTRAINT fk_fact_det_fact_tf FOREIGN KEY (det_ft_tienda_fact, det_ft_fact)  REFERENCES factura_tf(fact_tf_tie, fact_tf_num),
+    CONSTRAINT fk_factdet_lote FOREIGN KEY (det_ft_prod, det_ft_tienda_lote, det_ft_lote) REFERENCES lotes (lot_prod, lot_tienda, lot_id),
+    CONSTRAINT pk_det_facturatf PRIMARY KEY (det_ft_tienda_fact, det_ft_fact, det_ft_id)
 );
 
-create table det_fact_o (
-    det_fo_fact number(4) not null,
-    det_fo_idtem number(4) not null,
-    det_fo_pais number(4) not null,
-    det_fo_prod number(4) not null,
-    det_fo_id number(4) not null,
-    det_fo_cantidad number(4) not null,
-    det_fo_tipo_cli varchar2(10) not null,
+CREATE TABLE det_fact_o (
+    det_fo_fact NUMBER(10, 0) NOT NULL,
+    det_fo_pais NUMBER(10, 0) NOT NULL,
+    det_fo_prod NUMBER(10, 0) NOT NULL,
+    det_fo_id  NUMBER(10, 0) DEFAULT ON NULL det_fact_o_seq.NEXTVAL NOT NULL, 
+    det_fo_cantidad NUMBER(10, 0) NOT NULL,
+    det_fo_tipo_cli VARCHAR2(10) NOT NULL,
 
-    constraint pk_det_facturaO primary key (det_fo_fact, det_fo_prod, det_fo_idtem, det_fo_pais, det_fo_id),
-    constraint fk_fact_det_fact_o foreign key (det_fo_fact) references factura_o(fact_o_num),
-    constraint fk_factdet_cat foreign key (det_fo_prod, det_fo_idtem, det_fo_pais) references catalogos (cat_prod, cat_prod_idtem, cat_pais)
+    CONSTRAINT pk_det_facturaO PRIMARY KEY (det_fo_fact, det_fo_id),
+    CONSTRAINT fk_fact_det_fact_o FOREIGN KEY (det_fo_fact) REFERENCES factura_o(fact_o_num),
+    CONSTRAINT fk_factdet_cat FOREIGN KEY (det_fo_prod, det_fo_pais) REFERENCES catalogos (cat_prod, cat_pais)
 );
-
 
 --secuencia para auditoria tours 
 create sequence auditoria_tours_seq start with 1 increment by 1;

@@ -124,6 +124,21 @@ insert into tours (to_fini, to_cupos, to_costo)
 values (TO_DATE('19-11-2025', 'DD-MM-YYYY'), 25, 3500);
 
 insert into tours (to_fini, to_cupos, to_costo)
+values (TO_DATE('10-12-2025', 'DD-MM-YYYY'), 25, 3500);
+
+insert into tours (to_fini, to_cupos, to_costo)
+values (TO_DATE('8-09-2024', 'DD-MM-YYYY'), 20, 3500);
+
+insert into tours (to_fini, to_cupos, to_costo)
+values (TO_DATE('01-10-2024', 'DD-MM-YYYY'), 20, 3500);
+
+insert into tours (to_fini, to_cupos, to_costo)
+values (TO_DATE('29-10-2024', 'DD-MM-YYYY'), 20, 3500);
+
+insert into tours (to_fini, to_cupos, to_costo)
+values (TO_DATE('19-11-2024', 'DD-MM-YYYY'), 20, 3500);
+
+
 
 
 

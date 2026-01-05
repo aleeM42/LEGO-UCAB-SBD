@@ -208,25 +208,39 @@ BEGIN
     END LOOP;
     
     -- Finalizar factura (calcula puntos, envío, recargos)
-    FINALIZAR_FACTURA_ONLINE(
-        p_fact_num => v_fact_num,
-        p_msg => p_mensaje
-    );
+    BEGIN
+        FINALIZAR_FACTURA_ONLINE(
+            p_fact_num => v_fact_num,
+            p_msg => p_mensaje
+        );
+    EXCEPTION
+        WHEN OTHERS THEN
+            -- Capturar cualquier error de finalización y propagarlo con más contexto
+            RAISE_APPLICATION_ERROR(-22017, 'Error al finalizar factura: ' || SQLERRM || 
+                ' | Mensaje del procedimiento: ' || p_mensaje);
+    END;
     
     -- Obtener información final de la factura
-    SELECT 
-        fact_o_total,
-        fact_o_puntosgen,
-        CASE 
-            WHEN venta_gratis = 'SI' THEN 1
-            ELSE 0
-        END
-    INTO 
-        v_total_final,
-        p_puntos_generados,
-        v_venta_gratis
-    FROM factura_o
-    WHERE fact_o_num = v_fact_num;
+    BEGIN
+        SELECT 
+            fact_o_total,
+            fact_o_puntosgen,
+            CASE 
+                WHEN venta_gratis = 'SI' THEN 1
+                ELSE 0
+            END
+        INTO 
+            v_total_final,
+            p_puntos_generados,
+            v_venta_gratis
+        FROM factura_o
+        WHERE fact_o_num = v_fact_num;
+    EXCEPTION
+        WHEN NO_DATA_FOUND THEN
+            -- Si no se encuentra la factura, recalcular desde los detalles
+            RAISE_APPLICATION_ERROR(-22022, 'Error: No se encontró la factura ' || v_fact_num || 
+                ' después de finalizarla. ' || p_mensaje);
+    END;
     
     -- Calcular total de detalles (sin envío ni recargos) usando la función
     v_total_detalles := fn_calcular_total_factura_online(v_fact_num);

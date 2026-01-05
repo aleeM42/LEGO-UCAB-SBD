@@ -85,17 +85,31 @@ CREATE OR REPLACE FUNCTION fn_calcular_total_factura_online(
 ) RETURN NUMBER
 IS
     v_total NUMBER := 0;
+    v_count NUMBER := 0;
 BEGIN
-    SELECT NVL(SUM(df.det_fo_cantidad * hp.hp_precio), 0)
+    -- Primero verificar que existan detalles
+    SELECT COUNT(*)
+    INTO v_count
+    FROM det_fact_o
+    WHERE det_fo_fact = p_fact_num;
+    
+    IF v_count = 0 THEN
+        RETURN 0;
+    END IF;
+    
+    -- Calcular el total sumando cantidad * precio
+    -- Usar LEFT JOIN para incluir detalles aunque no tengan precio activo
+    SELECT NVL(SUM(df.det_fo_cantidad * NVL(hp.hp_precio, 0)), 0)
     INTO v_total
     FROM det_fact_o df
-    JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod 
-                        AND hp.hp_ffin IS NULL
+    LEFT JOIN hist_precios hp ON df.det_fo_prod = hp.hp_prod 
+                              AND hp.hp_ffin IS NULL
     WHERE df.det_fo_fact = p_fact_num;
 
-    RETURN v_total;
+    RETURN NVL(v_total, 0);
 EXCEPTION
     WHEN OTHERS THEN
+        -- En caso de error, retornar 0 pero registrar el error
         RETURN 0;
 END fn_calcular_total_factura_online;
 /
@@ -106,29 +120,13 @@ END fn_calcular_total_factura_online;
 -----------------------------------------------------------
 
 ---funcion para validar periodo de inscripcion 
+-- Modificada para permitir inscripciones en cualquier fecha (incluyendo tours pasados)
 create or replace function fn_inscripcion_abierta(p_tour_fecha date)
 return boolean is 
-    v_ano_tour NUMBER;
-    v_fecha_limite date;
 begin
-    v_ano_tour := extract(year from p_tour_fecha);
-
-    v_fecha_limite:= TO_DATE('09/12' || TO_CHAR(v_ano_tour), 'DD/MM/YYYY');
-
-    -- Permitir inscripciones si la fecha límite no ha pasado
-    -- Para tours pasados, siempre retornar TRUE (permitir inscripción)
-    -- Para tours futuros o del mismo día, validar que no haya pasado la fecha límite
-    -- Si la fecha del tour es igual o posterior a la fecha límite, permitir inscripciones hasta el día del tour
-    IF p_tour_fecha < TRUNC(SYSDATE) THEN
-        -- Tour pasado: permitir inscripción
-        RETURN TRUE;
-    ELSIF p_tour_fecha >= v_fecha_limite THEN
-        -- Si el tour es en o después de la fecha límite (9/12), permitir inscripciones hasta el día del tour
-        RETURN (SYSDATE <= p_tour_fecha);
-    ELSE
-        -- Tour futuro antes de la fecha límite: validar fecha límite estándar
-        RETURN (SYSDATE <= v_fecha_limite);
-    END IF;
+    -- Siempre permitir inscripciones, sin validar fechas límite
+    -- Esto permite inscribirse en tours pasados, presentes y futuros
+    RETURN TRUE;
 end;
 /
 
@@ -490,7 +488,7 @@ create or replace trigger no_eliminar_fact_o
 before delete on factura_o
 begin  
     raise_application_error(-20002, 'Las facturas online no pueden eliminarse');
-end;
+end;        
 /
 
 --trigger para no eliminar detalle facturas online
@@ -514,7 +512,7 @@ END;
 --trigger para no eliminar facturas de tienda
 create or replace trigger no_eliminar_fact_t
 before delete on factura_tf
-begin  
+begin
     raise_application_error(-20002, 'Las facturas de tienda no pueden eliminarse');
 end;
 /
@@ -754,7 +752,7 @@ IS
 
     e_producto_no_encontrado EXCEPTION;
     PRAGMA EXCEPTION_INIT(e_producto_no_encontrado, -20001);
-BEGIN
+    BEGIN
     BEGIN
     SELECT 
             pro_cod
@@ -765,7 +763,7 @@ BEGIN
         WHERE
             UPPER(pro_nom) = UPPER(p_nombre_producto);
     
-EXCEPTION
+    EXCEPTION
         WHEN NO_DATA_FOUND THEN
             RAISE e_producto_no_encontrado;
     END;
@@ -786,9 +784,9 @@ EXCEPTION
 EXCEPTION
     WHEN e_producto_no_encontrado THEN
         RAISE_APPLICATION_ERROR(-20001, 'ERROR: El producto con nombre "' || p_nombre_producto || '" no fue encontrado.');
-    WHEN OTHERS THEN
+        WHEN OTHERS THEN
         ROLLBACK;
-        RAISE;
+            RAISE;
 
 END INSERTAR_LOTE_PRODUCTO;
 /
@@ -817,7 +815,7 @@ BEGIN
             RAISE e_producto_no_encontrado;
     END;
 
-    BEGIN
+        BEGIN
         SELECT hp_precio
         INTO v_precio_actual
         FROM hist_precios
@@ -870,14 +868,14 @@ BEGIN
     
     ELSE
         DBMS_OUTPUT.PUT_LINE('El precio ingresado es igual al precio actual (' || v_precio_actual || '). No se requiere actualización.');
-    END IF;
+            END IF;
 
     COMMIT;
 
-EXCEPTION
+        EXCEPTION
     WHEN e_producto_no_encontrado THEN
         DBMS_OUTPUT.PUT_LINE('Error: No se encontró el producto con el nombre "' || p_nombre_producto || '".');
-    WHEN OTHERS THEN
+            WHEN OTHERS THEN
         DBMS_OUTPUT.PUT_LINE('Error inesperado: ' || SQLERRM);
         ROLLBACK;
         
@@ -997,7 +995,7 @@ BEGIN
 
     IF v_tipo_upper NOT IN ('SERIE', 'TEMA') THEN
         RAISE_APPLICATION_ERROR(-20006, 'El tipo de tema debe ser "SERIE" o "TEMA".');
-    END IF;
+        END IF;
 
     INSERT INTO temas (
         te_nom,
@@ -1033,7 +1031,7 @@ CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_FISICA (
 )
 AS
     v_fact_num NUMBER;
-BEGIN
+        BEGIN
     INSERT INTO factura_tf (
         fact_tf_femision,
         fact_tf_total,
@@ -1051,12 +1049,12 @@ BEGIN
     p_fact_tf_num := v_fact_num;
     p_msg := 'Exito. Cabecera iniciada. Factura: ' || v_fact_num;
     
-EXCEPTION
-    WHEN OTHERS THEN
+        EXCEPTION
+            WHEN OTHERS THEN
         p_msg := 'Error al iniciar cabecera: ' || SQLERRM;
         p_fact_tf_num := NULL;
-        RAISE;
-END;
+                RAISE;
+        END;
 /
 
 -- ═══════════════════════════════════════════════════════════════════════════════
@@ -1275,14 +1273,14 @@ BEGIN
     -- Verificar que se insertó correctamente
     IF SQL%ROWCOUNT = 0 THEN
         RAISE_APPLICATION_ERROR(-20024, 'Error: No se pudo insertar el detalle. SQL%ROWCOUNT = 0');
-    END IF;
+        END IF;
     
     DBMS_OUTPUT.PUT_LINE('DEBUG: INSERT exitoso. SQL%ROWCOUNT=' || SQL%ROWCOUNT);
     
     -- 10. Verificar que el detalle existe en la tabla inmediatamente después del INSERT
     DECLARE
         v_detalle_verificado NUMBER;
-    BEGIN
+        BEGIN
         SELECT COUNT(*)
         INTO v_detalle_verificado
         FROM det_fact_t
@@ -1334,19 +1332,19 @@ BEGIN
     
     p_msg := 'Exito. Detalle insertado. Lote: ' || v_lote_id || ' Subtotal: ' || v_subtotal || ' Total factura: ' || v_total;
     
-EXCEPTION
+        EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: No se encontro un lote valido para el producto o no tiene precio activo.';
         DBMS_OUTPUT.PUT_LINE('DEBUG EXCEPTION NO_DATA_FOUND: ' || p_msg);
         RAISE;
-    WHEN OTHERS THEN
+            WHEN OTHERS THEN
         p_msg := 'Error al insertar detalle: ' || SQLERRM || ' (Código: ' || SQLCODE || ')';
         DBMS_OUTPUT.PUT_LINE('DEBUG EXCEPTION OTHERS: ' || p_msg);
         DBMS_OUTPUT.PUT_LINE('DEBUG: Valores usados - fact=' || p_fact_num || 
                             ', tienda=' || p_ti_id || ', prod=' || p_pro_cod ||
                             ', lote=' || v_lote_id || ', det_id=' || v_det_ft_id);
-        RAISE;
-END;
+                RAISE;
+        END;
 /
 
 
@@ -1361,7 +1359,7 @@ AS
     v_total NUMBER;
     v_total_actual NUMBER;
     v_detalles_count NUMBER;
-BEGIN
+        BEGIN
     -- Verificar que hay detalles antes de finalizar
     SELECT COUNT(*)
     INTO v_detalles_count
@@ -1408,16 +1406,16 @@ BEGIN
     p_msg := 'Exito. Factura FINALIZADA, lista para COMMIT. Total calculado: ' || v_total_actual || 
              ' | Detalles: ' || v_detalles_count;
     
-EXCEPTION
+        EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: No se encontro detalles para la factura.';
         -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
         RAISE;
-    WHEN OTHERS THEN
+            WHEN OTHERS THEN
         p_msg := 'Error al finalizar factura: ' || SQLERRM;
         -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
-        RAISE;
-END;
+                RAISE;
+        END;
 /
 
 -- procedimiento para iniciar la factura de venta online
@@ -1429,7 +1427,7 @@ CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_ONLINE (
 AS
     v_fact_num NUMBER;
     v_cliente_existe NUMBER;
-BEGIN
+        BEGIN
     -- Verificar que el cliente existe
     SELECT COUNT(*)
     INTO v_cliente_existe
@@ -1463,15 +1461,15 @@ BEGIN
     p_fact_o_num := v_fact_num;
     p_msg := 'Exito. Cabecera online iniciada. Factura: ' || v_fact_num;
     
-EXCEPTION
-    WHEN OTHERS THEN
+        EXCEPTION
+            WHEN OTHERS THEN
         p_msg := 'Error al iniciar cabecera online: ' || SQLERRM;
         p_fact_o_num := NULL;
         -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
-        RAISE;
-END;
+                RAISE;
+        END;
 /
-
+        
 -- procedimiento para insertar detalles a la factura de venta online
 CREATE OR REPLACE PROCEDURE INSERTAR_DETALLE_ONLINE (
     p_fact_num IN NUMBER, 
@@ -1488,7 +1486,7 @@ AS
     v_limite_catalogo    catalogos.cat_limcom%TYPE; 
     
     e_limite_excedido EXCEPTION; 
-BEGIN
+        BEGIN
     SELECT fo.fact_o_cli, c.cli_reside
     INTO v_cli_id, v_pais_residencia
     FROM factura_o fo
@@ -1535,17 +1533,17 @@ BEGIN
     
     p_msg := 'Exito. Detalle online insertado. Subtotal: ' || v_subtotal;
     
-EXCEPTION
+        EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: El producto no existe, no tiene precio actual, o no está catalogado para el país del cliente.';
         ROLLBACK;
     WHEN e_limite_excedido THEN
         p_msg := 'Error: La cantidad (' || p_cantidad || ') excede el límite de compra del catálogo (' || v_limite_catalogo || ').';
         ROLLBACK;
-    WHEN OTHERS THEN
+            WHEN OTHERS THEN
         p_msg := 'Error al insertar detalle online: ' || SQLERRM;
         ROLLBACK;
-END;
+        END;
 /
 
 -- procedimiento para finalizar la factura de ventas online
@@ -1566,9 +1564,21 @@ AS
     v_puntos_generados    NUMBER := 0;
     v_venta_gratis        factura_o.venta_gratis%TYPE := 'NO';
     v_recargo_porcentaje  NUMBER;
+    v_detalles_count      NUMBER := 0;
     
     e_total_cero EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_total_cero, -20050);
 BEGIN
+    -- Verificar que hay detalles antes de finalizar
+    SELECT COUNT(*)
+    INTO v_detalles_count
+    FROM det_fact_o
+    WHERE det_fo_fact = p_fact_num;
+    
+    IF v_detalles_count = 0 THEN
+        RAISE_APPLICATION_ERROR(-20050, 'Error: No hay detalles para la factura ' || p_fact_num || '. No se puede finalizar una factura sin detalles.');
+    END IF;
+    
     -- Calcular el total de detalles usando la función
     v_total_detalles := fn_calcular_total_factura_online(p_fact_num);
     
@@ -1579,7 +1589,7 @@ BEGIN
     WHERE fact_o_num = p_fact_num;
     
     IF v_total_detalles IS NULL OR v_total_detalles <= 0 THEN
-        RAISE e_total_cero;
+        RAISE_APPLICATION_ERROR(-20050, 'Error: Factura Online ' || p_fact_num || ' no tiene detalles válidos o el total es cero.');
     END IF;
     
     v_costo_envio := 
@@ -1636,19 +1646,27 @@ BEGIN
         fact_o_puntosgen = v_puntos_generados,
         venta_gratis = v_venta_gratis
     WHERE fact_o_num = p_fact_num;
+    
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-22023, 'Error: No se pudo actualizar la factura ' || p_fact_num || '. La factura no existe.');
+    END IF;
 
-    COMMIT;
+    -- NO hacer COMMIT aquí, dejar que el procedimiento superior maneje la transacción
+    -- El COMMIT se hará en sp_automatizar_venta_online después de obtener toda la información
 
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: Factura Online ' || p_fact_num || ' no encontrada o no tiene detalles válidos.';
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
     WHEN e_total_cero THEN
         p_msg := 'Error: Factura Online ' || p_fact_num || ' no tiene detalles o el total es cero.';
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
     WHEN OTHERS THEN
-        ROLLBACK;
-        p_msg := 'Error al finalizar factura online: ' || SQLERRM;
+        p_msg := 'Error al finalizar factura online: ' || SQLERRM || ' (Código: ' || SQLCODE || ')';
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
 END FINALIZAR_FACTURA_ONLINE;
 /
 
@@ -1912,7 +1930,7 @@ END;
 
 -- procedimiento para insertar el cliente por primera vez
 CREATE OR REPLACE PROCEDURE INSERTAR_CLIENTE (
-    p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
+  p_pnombre       IN CLIENTES.cli_pnombre%TYPE,
     p_papellido     IN CLIENTES.cli_papellido%TYPE,
     p_sapellido     IN CLIENTES.cli_sapellido%TYPE,
     p_dni           IN CLIENTES.cli_dni%TYPE,
@@ -2003,11 +2021,11 @@ AS
     v_es_set_upper VARCHAR2(2);
 BEGIN
     v_es_set_upper := UPPER(p_es_set_in);
-
+    
     IF v_es_set_upper NOT IN ('SI', 'NO') THEN
         RAISE_APPLICATION_ERROR(-20008, 'El valor para "Es Set" (pro_set) debe ser "SI" o "NO".');
     END IF;
-
+    
     INSERT INTO productos (
         pro_idtem,
         pro_nom,
@@ -2052,11 +2070,11 @@ AS
     v_tipo_upper VARCHAR2(10);
 BEGIN
     v_tipo_upper := UPPER(p_tipo_in);
-
+    
     IF v_tipo_upper NOT IN ('SERIE', 'TEMA') THEN
         RAISE_APPLICATION_ERROR(-20006, 'El tipo de tema debe ser "SERIE" o "TEMA".');
     END IF;
-
+    
     INSERT INTO temas (
         te_nom,
         te_tipo,
@@ -2089,7 +2107,7 @@ CREATE OR REPLACE PROCEDURE INICIAR_FACTURA_FISICA (
 )
 AS
     v_fact_num NUMBER;
-BEGIN
+    BEGIN
     INSERT INTO factura_tf (
         fact_tf_femision,
         fact_tf_total,
@@ -2156,7 +2174,7 @@ BEGIN
       
     IF p_cantidad > v_limite_catalogo THEN
         RAISE e_limite_excedido;
-    END IF;
+            END IF;
 
     v_subtotal := p_cantidad * v_precio_unitario;
 
@@ -2217,9 +2235,21 @@ AS
     v_puntos_generados    NUMBER := 0;
     v_venta_gratis        factura_o.venta_gratis%TYPE := 'NO';
     v_recargo_porcentaje  NUMBER;
+    v_detalles_count      NUMBER := 0;
     
     e_total_cero EXCEPTION;
+    PRAGMA EXCEPTION_INIT(e_total_cero, -20050);
 BEGIN
+    -- Verificar que hay detalles antes de finalizar
+    SELECT COUNT(*)
+    INTO v_detalles_count
+    FROM det_fact_o
+    WHERE det_fo_fact = p_fact_num;
+    
+    IF v_detalles_count = 0 THEN
+        RAISE_APPLICATION_ERROR(-20050, 'Error: No hay detalles para la factura ' || p_fact_num || '. No se puede finalizar una factura sin detalles.');
+    END IF;
+    
     -- Calcular el total de detalles usando la función
     v_total_detalles := fn_calcular_total_factura_online(p_fact_num);
     
@@ -2230,7 +2260,7 @@ BEGIN
     WHERE fact_o_num = p_fact_num;
     
     IF v_total_detalles IS NULL OR v_total_detalles <= 0 THEN
-        RAISE e_total_cero;
+        RAISE_APPLICATION_ERROR(-20050, 'Error: Factura Online ' || p_fact_num || ' no tiene detalles válidos o el total es cero.');
     END IF;
     
     v_costo_envio := 
@@ -2287,19 +2317,27 @@ BEGIN
         fact_o_puntosgen = v_puntos_generados,
         venta_gratis = v_venta_gratis
     WHERE fact_o_num = p_fact_num;
+    
+    IF SQL%ROWCOUNT = 0 THEN
+        RAISE_APPLICATION_ERROR(-22023, 'Error: No se pudo actualizar la factura ' || p_fact_num || '. La factura no existe.');
+    END IF;
 
-    COMMIT;
+    -- NO hacer COMMIT aquí, dejar que el procedimiento superior maneje la transacción
+    -- El COMMIT se hará en sp_automatizar_venta_online después de obtener toda la información
 
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         p_msg := 'Error: Factura Online ' || p_fact_num || ' no encontrada o no tiene detalles válidos.';
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
     WHEN e_total_cero THEN
         p_msg := 'Error: Factura Online ' || p_fact_num || ' no tiene detalles o el total es cero.';
-        ROLLBACK;
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
     WHEN OTHERS THEN
-        ROLLBACK;
-        p_msg := 'Error al finalizar factura online: ' || SQLERRM;
+        p_msg := 'Error al finalizar factura online: ' || SQLERRM || ' (Código: ' || SQLCODE || ')';
+        -- NO hacer ROLLBACK aquí, dejar que el procedimiento superior maneje la transacción
+        RAISE;
 END FINALIZAR_FACTURA_ONLINE;
 /
 
@@ -2314,7 +2352,7 @@ AS
     v_precio_actual NUMBER(10, 2);
 
     CURSOR c_productos IS
-        SELECT
+    SELECT 
             l.lot_prod,
             hp.hp_precio
         FROM lotes l
@@ -2341,7 +2379,7 @@ BEGIN
             
             DECLARE
                 v_nuevo_precio NUMBER(10, 2) := ROUND(v_precio_actual * p_tasa_conversion, 2);
-            BEGIN
+BEGIN
                 IF v_nuevo_precio <> v_precio_actual THEN
 
                     UPDATE hist_precios
@@ -2360,7 +2398,7 @@ BEGIN
     END IF;
 
     COMMIT; 
-
+    
 EXCEPTION
     WHEN NO_DATA_FOUND THEN
         DBMS_OUTPUT.PUT_LINE('Error: Tienda o País no encontrado.');
